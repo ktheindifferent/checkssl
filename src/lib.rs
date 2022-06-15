@@ -9,7 +9,13 @@ use x509_parser::extensions::*;
 use chrono::{Utc, TimeZone, DateTime};
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+extern crate savefile;
+use savefile::prelude::*;
+
+#[macro_use]
+extern crate savefile_derive;
+
+#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct ServerCert {
     pub common_name: String,
     pub signature_algorithm: String,
@@ -18,14 +24,14 @@ pub struct ServerCert {
     pub state: String,
     pub locality: String,
     pub organization: String,
-    pub not_after: DateTime<Utc>,
-    pub not_before: DateTime<Utc>,
+    // pub not_after: DateTime<Utc>,
+    // pub not_before: DateTime<Utc>,
     pub issuer: String,
     pub is_valid: bool,
     pub time_to_expiration: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct IntermediateCert {
     pub common_name: String,
     pub signature_algorithm: String,
@@ -33,14 +39,14 @@ pub struct IntermediateCert {
     pub state: String,
     pub locality: String,
     pub organization: String,
-    pub not_after: DateTime<Utc>,
-    pub not_before: DateTime<Utc>,
+    // pub not_after: DateTime<Utc>,
+    // pub not_before: DateTime<Utc>,
     pub issuer: String,
     pub is_valid: bool,
     pub time_to_expiration: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct Cert {
     pub server: ServerCert,
     pub intermediate: IntermediateCert
@@ -63,7 +69,7 @@ impl CheckSSL {
     ///   }
     ///   Err(e) => {
     ///     // ssl invalid
-    ///     eprintln!(e);
+    ///     eprintln!("{}", e);
     ///   }
     /// }
     /// ```
@@ -94,8 +100,8 @@ impl CheckSSL {
             state: "".to_string(),
             locality: "".to_string(),
             organization: "".to_string(),
-            not_after: Utc::now(),
-            not_before: Utc::now(),
+            // not_after: Utc::now(),
+            // not_before: Utc::now(),
             issuer: "".to_string(),
             is_valid: false,
             time_to_expiration: "".to_string(),
@@ -108,8 +114,8 @@ impl CheckSSL {
             state: "".to_string(),
             locality: "".to_string(),
             organization: "".to_string(),
-            not_after: Utc::now(),
-            not_before: Utc::now(),
+            // not_after: Utc::now(),
+            // not_before: Utc::now(),
             issuer: "".to_string(),
             is_valid: false,
             time_to_expiration: "".to_string(),
@@ -130,8 +136,8 @@ impl CheckSSL {
                 //check if it's ca or not, if ca then insert to intermediate certificate
                 if is_ca {
                     intermediate_cert.is_valid = x509cert.validity().is_valid();
-                    intermediate_cert.not_after = Utc.timestamp(x509cert.tbs_certificate.validity.not_after.timestamp(), 0);
-                    intermediate_cert.not_before = Utc.timestamp(x509cert.tbs_certificate.validity.not_before.timestamp(), 0);
+                    // intermediate_cert.not_after = Utc.timestamp(x509cert.tbs_certificate.validity.not_after.timestamp(), 0);
+                    // intermediate_cert.not_before = Utc.timestamp(x509cert.tbs_certificate.validity.not_before.timestamp(), 0);
 
                     match oid2sn(&x509cert.signature_algorithm.algorithm) {
                         Ok(s) => {
@@ -177,8 +183,8 @@ impl CheckSSL {
                     }
                 } else {
                     server_cert.is_valid = x509cert.validity().is_valid();
-                    server_cert.not_after = Utc.timestamp(x509cert.tbs_certificate.validity.not_after.timestamp(), 0);
-                    server_cert.not_before = Utc.timestamp(x509cert.tbs_certificate.validity.not_before.timestamp(), 0);
+                    // server_cert.not_after = Utc.timestamp(x509cert.tbs_certificate.validity.not_after.timestamp(), 0);
+                    // server_cert.not_before = Utc.timestamp(x509cert.tbs_certificate.validity.not_before.timestamp(), 0);
 
                     match oid2sn(&x509cert.signature_algorithm.algorithm) {
                         Ok(s) => {
