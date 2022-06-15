@@ -1,6 +1,6 @@
 [package]
 name = "checkssl"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Aldi Perdana <aldidana@gmail.com>, Caleb Smith <calebsmithwoolrich@gmail.com>"]
 edition = "2018"
 description = "Check ssl certificate"
