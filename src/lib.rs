@@ -8,10 +8,10 @@ use x509_parser::objects::*;
 use x509_parser::extensions::*;
 use chrono::{Utc, TimeZone, DateTime};
 use serde::{Serialize, Deserialize};
-
+use std::time::Duration;
 extern crate savefile;
 use savefile::prelude::*;
-
+use std::net::{SocketAddr, ToSocketAddrs};
 #[macro_use]
 extern crate savefile_derive;
 
@@ -84,7 +84,7 @@ impl CheckSSL {
         };
 
         let mut sess = rustls::ClientSession::new(&rc_config, site);
-        let mut sock = TcpStream::connect(format!("{}:443", domain))?;
+        let mut sock = TcpStream::connect_timeout(&format!("{}:443", domain).to_socket_addrs().unwrap().next().unwrap(), Duration::from_secs(5))?;
         let mut tls = rustls::Stream::new(&mut sess, &mut sock);
 
         let req = format!("GET / HTTP/1.0\r\nHost: {}\r\nConnection: \
