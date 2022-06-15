@@ -257,9 +257,15 @@ impl CheckSSL {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn main() {
+        println!("SSL: {:?}", CheckSSL::from_domain("rust-lang.org"));
+       
+    }
 
     #[test]
     fn test_check_ssl_server_is_valid() {
+        println!("SSL: {:?}", CheckSSL::from_domain("rust-lang.org"));
         assert!(CheckSSL::from_domain("rust-lang.org").unwrap().server.is_valid);
     }
 
