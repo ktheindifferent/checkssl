@@ -17,11 +17,12 @@ use std::path::Path;
 ///
 /// ```no_run
 /// use checkssl::CustomRootStoreBuilder;
+/// use std::path::Path;
 ///
 /// let store = CustomRootStoreBuilder::new()
-///     .add_pem_file("/path/to/ca.pem")
+///     .add_pem_file(Path::new("ca.pem"))
 ///     .unwrap()
-///     .add_der_file("/path/to/ca.der")
+///     .add_der_file(Path::new("ca.der"))
 ///     .unwrap()
 ///     .build();
 /// ```

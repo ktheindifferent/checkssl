@@ -29,6 +29,7 @@
 mod error;
 mod chain_validator;
 mod custom_roots;
+mod platform;
 
 use std::sync::{Arc};
 use rustls::Session;
@@ -54,6 +55,7 @@ use sha1::{Sha1};
 pub use error::CheckSSLError;
 pub use chain_validator::{ChainValidator, ChainValidationResult, CertificateInfo};
 pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
+pub use platform::{platform_name, architecture, get_system_cert_paths};
 
 /// Information about the server's SSL certificate.
 ///
