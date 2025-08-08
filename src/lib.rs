@@ -30,6 +30,7 @@ mod error;
 mod chain_validator;
 mod custom_roots;
 mod platform;
+mod ocsp;
 
 use std::sync::{Arc};
 use rustls::Session;
@@ -56,6 +57,7 @@ pub use error::CheckSSLError;
 pub use chain_validator::{ChainValidator, ChainValidationResult, CertificateInfo};
 pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
 pub use platform::{platform_name, architecture, get_system_cert_paths};
+pub use ocsp::{check_ocsp_status, OcspStatus, OcspRequest, OcspResponse, RevocationReason};
 
 /// Information about the server's SSL certificate.
 ///
@@ -164,7 +166,9 @@ impl Default for CheckSSLConfig {
 /// Main struct for performing SSL certificate checks.
 ///
 /// This struct provides static methods for checking SSL certificates
-/// from domains using various configurations.
+/// from domains using various configurations. SNI (Server Name Indication)
+/// is automatically enabled for all domain checks, ensuring proper certificate
+/// validation for virtual hosts and shared hosting environments.
 pub struct CheckSSL();
 
 impl CheckSSL {
