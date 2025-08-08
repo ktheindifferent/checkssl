@@ -1,4 +1,34 @@
+//! # CheckSSL
+//!
+//! A Rust library for validating SSL/TLS certificates.
+//!
+//! ## Features
+//!
+//! - Certificate validation and information extraction
+//! - Configurable timeouts and ports
+//! - Both synchronous and asynchronous APIs
+//! - Certificate chain validation
+//! - SHA256 and SHA1 fingerprint generation
+//! - Comprehensive error handling
+//!
+//! ## Quick Start
+//!
+//! ```no_run
+//! use checkssl::CheckSSL;
+//!
+//! // Basic certificate check
+//! match CheckSSL::from_domain("rust-lang.org".to_string()) {
+//!     Ok(cert) => {
+//!         println!("Certificate is valid: {}", cert.server.is_valid);
+//!         println!("Days to expiration: {}", cert.server.days_to_expiration);
+//!     }
+//!     Err(e) => eprintln!("Error: {}", e),
+//! }
+//! ```
+
 mod error;
+mod chain_validator;
+mod custom_roots;
 
 use std::sync::{Arc};
 use rustls::Session;
@@ -22,7 +52,13 @@ use sha2::{Sha256, Digest as Sha2Digest};
 use sha1::{Sha1};
 
 pub use error::CheckSSLError;
+pub use chain_validator::{ChainValidator, ChainValidationResult, CertificateInfo};
+pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
 
+/// Information about the server's SSL certificate.
+///
+/// Contains detailed information extracted from the server certificate
+/// including validity, issuer, subject, and cryptographic details.
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct ServerCert {
     pub common_name: String,
@@ -50,6 +86,10 @@ pub struct ServerCert {
     pub fingerprint_sha1: String,
 }
 
+/// Information about an intermediate certificate in the chain.
+///
+/// Intermediate certificates are used by Certificate Authorities to
+/// sign server certificates while keeping the root certificate secure.
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct IntermediateCert {
     pub common_name: String,
@@ -77,6 +117,10 @@ pub struct IntermediateCert {
     pub fingerprint_sha1: String,
 }
 
+/// Complete certificate information including server and intermediate certificates.
+///
+/// This is the main return type for certificate checks, containing
+/// both the server certificate and intermediate certificate information.
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct Cert {
     pub server: ServerCert,
@@ -85,6 +129,21 @@ pub struct Cert {
     pub protocol_version: String,
 }
 
+/// Configuration options for SSL certificate checks.
+///
+/// Allows customization of timeout and port settings.
+///
+/// # Example
+///
+/// ```
+/// use checkssl::CheckSSLConfig;
+/// use std::time::Duration;
+///
+/// let config = CheckSSLConfig {
+///     timeout: Duration::from_secs(10),
+///     port: 8443,
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct CheckSSLConfig {
     pub timeout: Duration,
@@ -100,37 +159,100 @@ impl Default for CheckSSLConfig {
     }
 }
 
+/// Main struct for performing SSL certificate checks.
+///
+/// This struct provides static methods for checking SSL certificates
+/// from domains using various configurations.
 pub struct CheckSSL();
 
 impl CheckSSL {
-    /// Check ssl from domain with port 443 (blocking)
+    /// Check SSL certificate from a domain using default settings.
     ///
-    /// Example
+    /// This is the simplest way to check an SSL certificate. It uses:
+    /// - Port 443 (HTTPS default)
+    /// - 5 second timeout
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to check (e.g., "example.com")
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing:
+    /// - `Ok(Cert)` - Certificate information if successful
+    /// - `Err(CheckSSLError)` - Error details if the check fails
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use checkssl::CheckSSL;
     ///
     /// match CheckSSL::from_domain("rust-lang.org".to_string()) {
-    ///   Ok(certificate) => {
-    ///     // do something with certificate
-    ///     assert!(certificate.server.is_valid);
-    ///   }
-    ///   Err(e) => {
-    ///     // ssl invalid
-    ///     eprintln!("{}", e);
-    ///   }
+    ///     Ok(certificate) => {
+    ///         println!("Certificate valid: {}", certificate.server.is_valid);
+    ///         println!("Common name: {}", certificate.server.common_name);
+    ///         println!("Days to expiration: {}", certificate.server.days_to_expiration);
+    ///     }
+    ///     Err(e) => {
+    ///         eprintln!("Certificate check failed: {}", e);
+    ///     }
     /// }
     /// ```
     pub fn from_domain(domain: String) -> Result<Cert, CheckSSLError> {
         Self::from_domain_with_config(domain, CheckSSLConfig::default())
     }
 
-    /// Check ssl from domain with custom configuration (blocking)
+    /// Check SSL certificate with custom configuration.
+    ///
+    /// Allows customization of timeout and port settings for the certificate check.
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to check
+    /// * `config` - Custom configuration for the check
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::{CheckSSL, CheckSSLConfig};
+    /// use std::time::Duration;
+    ///
+    /// let config = CheckSSLConfig {
+    ///     timeout: Duration::from_secs(10),
+    ///     port: 8443,
+    /// };
+    ///
+    /// match CheckSSL::from_domain_with_config("example.com".to_string(), config) {
+    ///     Ok(cert) => println!("Certificate valid: {}", cert.server.is_valid),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// ```
     pub fn from_domain_with_config(domain: String, config: CheckSSLConfig) -> Result<Cert, CheckSSLError> {
         Self::check_cert_blocking(domain, config)
     }
 
-    /// Check ssl from domain (non-blocking)
+    /// Check SSL certificate asynchronously.
+    ///
+    /// Returns a future that can be awaited for the certificate check result.
+    /// Uses default configuration (port 443, 5 second timeout).
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to check
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() {
+    /// use checkssl::CheckSSL;
+    ///
+    /// let future = CheckSSL::from_domain_async("rust-lang.org".to_string());
+    /// match future.await {
+    ///     Ok(cert) => println!("Certificate valid: {}", cert.server.is_valid),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// # }
+    /// ```
     pub fn from_domain_async(domain: String) -> Pin<Box<dyn Future<Output = Result<Cert, CheckSSLError>> + Send>> {
         Self::from_domain_async_with_config(domain, CheckSSLConfig::default())
     }

@@ -1,7 +1,16 @@
+//! Error types for the CheckSSL library.
+//!
+//! This module defines custom error types that provide detailed
+//! information about what went wrong during certificate checking.
+
 use std::fmt;
 use std::error::Error;
 use std::io;
 
+/// Errors that can occur during SSL certificate checking.
+///
+/// This enum provides specific error variants for different failure modes,
+/// making it easier to handle errors appropriately.
 #[derive(Debug)]
 pub enum CheckSSLError {
     NetworkError(String),
