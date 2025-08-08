@@ -1,7 +1,9 @@
+mod error;
+
 use std::sync::{Arc};
 use rustls::Session;
 use std::net::TcpStream;
-use std::io::{Write, Error, ErrorKind};
+use std::io::{Write};
 use std::fmt::Debug;
 use x509_parser::{parse_x509_der};
 use x509_parser::objects::*;
@@ -18,6 +20,8 @@ use std::future::Future;
 use std::pin::Pin;
 use sha2::{Sha256, Digest as Sha2Digest};
 use sha1::{Sha1};
+
+pub use error::CheckSSLError;
 
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct ServerCert {
@@ -117,28 +121,28 @@ impl CheckSSL {
     ///   }
     /// }
     /// ```
-    pub fn from_domain(domain: String) -> Result<Cert, std::io::Error> {
+    pub fn from_domain(domain: String) -> Result<Cert, CheckSSLError> {
         Self::from_domain_with_config(domain, CheckSSLConfig::default())
     }
 
     /// Check ssl from domain with custom configuration (blocking)
-    pub fn from_domain_with_config(domain: String, config: CheckSSLConfig) -> Result<Cert, std::io::Error> {
+    pub fn from_domain_with_config(domain: String, config: CheckSSLConfig) -> Result<Cert, CheckSSLError> {
         Self::check_cert_blocking(domain, config)
     }
 
     /// Check ssl from domain (non-blocking)
-    pub fn from_domain_async(domain: String) -> Pin<Box<dyn Future<Output = Result<Cert, std::io::Error>> + Send>> {
+    pub fn from_domain_async(domain: String) -> Pin<Box<dyn Future<Output = Result<Cert, CheckSSLError>> + Send>> {
         Self::from_domain_async_with_config(domain, CheckSSLConfig::default())
     }
 
     /// Check ssl from domain with custom configuration (non-blocking)
-    pub fn from_domain_async_with_config(domain: String, config: CheckSSLConfig) -> Pin<Box<dyn Future<Output = Result<Cert, std::io::Error>> + Send>> {
+    pub fn from_domain_async_with_config(domain: String, config: CheckSSLConfig) -> Pin<Box<dyn Future<Output = Result<Cert, CheckSSLError>> + Send>> {
         Box::pin(async move {
             Self::check_cert_blocking(domain, config)
         })
     }
 
-    fn check_cert_blocking(domain: String, config: CheckSSLConfig) -> Result<Cert, std::io::Error> {
+    fn check_cert_blocking(domain: String, config: CheckSSLConfig) -> Result<Cert, CheckSSLError> {
 
         let (sender, receiver) = mpsc::channel();
         let timeout = config.timeout;
@@ -152,7 +156,7 @@ impl CheckSSL {
             let dnnn = dnn.as_str();
             let site = match webpki::DNSNameRef::try_from_ascii_str(dnnn) {
                 Ok(val) => val,
-                Err(e) => return Err(Error::new(ErrorKind::InvalidInput, e.to_string())),
+                Err(e) => return Err(CheckSSLError::InvalidDomainError(e.to_string())),
             };
     
             match format!("{}:{}", domain.clone().as_str(), port).to_socket_addrs(){
@@ -230,7 +234,7 @@ impl CheckSSL {
     
                                     let x509cert = match parse_x509_der(certificate.as_ref()) {
                                         Ok((_, x509cert)) => x509cert,
-                                        Err(e) => return Err(Error::new(ErrorKind::Other, e.to_string())),
+                                        Err(e) => return Err(CheckSSLError::CertificateParseError(e.to_string())),
                                     };
                     
                                     let is_ca = match x509cert.tbs_certificate.basic_constraints() {
@@ -262,7 +266,7 @@ impl CheckSSL {
                                             Ok(s) => {
                                                 intermediate_cert.signature_algorithm = s.to_string();
                                             }
-                                            Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                            Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                         }
 
                                         // Extract public key algorithm from the signature algorithm
@@ -316,7 +320,7 @@ impl CheckSSL {
                                                         intermediate_cert.issuer_cn = rdn_content;
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                         intermediate_cert.issuer = issuer_full.join(", ");
@@ -335,7 +339,7 @@ impl CheckSSL {
                                                         _ => {}
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                     } else {
@@ -351,7 +355,7 @@ impl CheckSSL {
                                             Ok(s) => {
                                                 server_cert.signature_algorithm = s.to_string();
                                             }
-                                            Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                            Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                         }
 
                                         // Extract public key algorithm from the signature algorithm
@@ -424,7 +428,7 @@ impl CheckSSL {
                                                         server_cert.issuer_cn = rdn_content;
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                         server_cert.issuer = issuer_full.join(", ");
@@ -443,7 +447,7 @@ impl CheckSSL {
                                                         _ => {}
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                     }
@@ -462,18 +466,18 @@ impl CheckSSL {
 
                                     }, // everything good
                                     Err(_) => {
-                                        return Err(Error::new(ErrorKind::Other, "Error sending message to main thread".to_string()));
+                                        return Err(CheckSSLError::NetworkError("Error sending message to main thread".to_string()));
                                     }, // we have been released, don't panic
                                 }
                          
                             } else {
-                                Err(Error::new(ErrorKind::NotFound, "certificate not found".to_string()))
+                                Err(CheckSSLError::CertificateParseError("certificate not found".to_string()))
                             }
                         },
-                        None => return Err(Error::new(ErrorKind::InvalidInput, "empty".to_string()))
+                        None => return Err(CheckSSLError::DnsResolutionError("empty socket address".to_string()))
                     }
                 },
-                Err(e) => return Err(Error::new(ErrorKind::InvalidInput, e.to_string()))
+                Err(e) => return Err(CheckSSLError::DnsResolutionError(e.to_string()))
             }
     
 
@@ -491,45 +495,10 @@ impl CheckSSL {
             Ok(dat) => {
                 return Ok(dat);
             },
-            Err(_e) => return Err(Error::new(ErrorKind::TimedOut, "Certificate check timed out".to_string()))
+            Err(_e) => return Err(CheckSSLError::TimeoutError("Certificate check timed out".to_string()))
         }
 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn main() {
-        println!("SSL: {:?}", CheckSSL::from_domain("rust-lang.org".to_string()));
-       
-    }
-
-    #[test]
-    fn test_check_ssl_server_is_valid() {
-        println!("SSL: {:?}", CheckSSL::from_domain("rust-lang.org".to_string()));
-        assert!(CheckSSL::from_domain("rust-lang.org".to_string()).unwrap().server.is_valid);
-    }
-
-    #[test]
-    fn test_check_ssl_server_is_invalid() {
-        let actual = CheckSSL::from_domain("expired.badssl.com".to_string());
-        // The test may fail with either InvalidData or TimedOut depending on the SSL verification
-        assert!(actual.is_err());
-    }
-
-    #[test]
-    fn test_check_ssl_with_custom_config() {
-        let config = CheckSSLConfig {
-            timeout: Duration::from_secs(10),
-            port: 443,
-        };
-        let result = CheckSSL::from_domain_with_config("rust-lang.org".to_string(), config);
-        assert!(result.is_ok());
-        let cert = result.unwrap();
-        assert!(cert.server.is_valid);
-        assert!(!cert.server.fingerprint_sha256.is_empty());
-        assert!(!cert.server.public_key_algorithm.is_empty());
-    }
-}
+mod tests;
