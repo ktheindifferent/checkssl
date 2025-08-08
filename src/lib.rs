@@ -1,7 +1,41 @@
+//! # CheckSSL
+//!
+//! A Rust library for validating SSL/TLS certificates.
+//!
+//! ## Features
+//!
+//! - Certificate validation and information extraction
+//! - Configurable timeouts and ports
+//! - Both synchronous and asynchronous APIs
+//! - Certificate chain validation
+//! - SHA256 and SHA1 fingerprint generation
+//! - Comprehensive error handling
+//!
+//! ## Quick Start
+//!
+//! ```no_run
+//! use checkssl::CheckSSL;
+//!
+//! // Basic certificate check
+//! match CheckSSL::from_domain("rust-lang.org".to_string()) {
+//!     Ok(cert) => {
+//!         println!("Certificate is valid: {}", cert.server.is_valid);
+//!         println!("Days to expiration: {}", cert.server.days_to_expiration);
+//!     }
+//!     Err(e) => eprintln!("Error: {}", e),
+//! }
+//! ```
+
+mod error;
+mod chain_validator;
+mod custom_roots;
+mod platform;
+mod ocsp;
+
 use std::sync::{Arc};
 use rustls::Session;
 use std::net::TcpStream;
-use std::io::{Write, Error, ErrorKind};
+use std::io::{Write};
 use std::fmt::Debug;
 use x509_parser::{parse_x509_der};
 use x509_parser::objects::*;
@@ -19,6 +53,16 @@ use std::pin::Pin;
 use sha2::{Sha256, Digest as Sha2Digest};
 use sha1::{Sha1};
 
+pub use error::CheckSSLError;
+pub use chain_validator::{ChainValidator, ChainValidationResult, CertificateInfo};
+pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
+pub use platform::{platform_name, architecture, get_system_cert_paths};
+pub use ocsp::{check_ocsp_status, OcspStatus, OcspRequest, OcspResponse, RevocationReason};
+
+/// Information about the server's SSL certificate.
+///
+/// Contains detailed information extracted from the server certificate
+/// including validity, issuer, subject, and cryptographic details.
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct ServerCert {
     pub common_name: String,
@@ -46,6 +90,10 @@ pub struct ServerCert {
     pub fingerprint_sha1: String,
 }
 
+/// Information about an intermediate certificate in the chain.
+///
+/// Intermediate certificates are used by Certificate Authorities to
+/// sign server certificates while keeping the root certificate secure.
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct IntermediateCert {
     pub common_name: String,
@@ -73,6 +121,10 @@ pub struct IntermediateCert {
     pub fingerprint_sha1: String,
 }
 
+/// Complete certificate information including server and intermediate certificates.
+///
+/// This is the main return type for certificate checks, containing
+/// both the server certificate and intermediate certificate information.
 #[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
 pub struct Cert {
     pub server: ServerCert,
@@ -81,6 +133,21 @@ pub struct Cert {
     pub protocol_version: String,
 }
 
+/// Configuration options for SSL certificate checks.
+///
+/// Allows customization of timeout and port settings.
+///
+/// # Example
+///
+/// ```
+/// use checkssl::CheckSSLConfig;
+/// use std::time::Duration;
+///
+/// let config = CheckSSLConfig {
+///     timeout: Duration::from_secs(10),
+///     port: 8443,
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct CheckSSLConfig {
     pub timeout: Duration,
@@ -96,49 +163,114 @@ impl Default for CheckSSLConfig {
     }
 }
 
+/// Main struct for performing SSL certificate checks.
+///
+/// This struct provides static methods for checking SSL certificates
+/// from domains using various configurations. SNI (Server Name Indication)
+/// is automatically enabled for all domain checks, ensuring proper certificate
+/// validation for virtual hosts and shared hosting environments.
 pub struct CheckSSL();
 
 impl CheckSSL {
-    /// Check ssl from domain with port 443 (blocking)
+    /// Check SSL certificate from a domain using default settings.
     ///
-    /// Example
+    /// This is the simplest way to check an SSL certificate. It uses:
+    /// - Port 443 (HTTPS default)
+    /// - 5 second timeout
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to check (e.g., "example.com")
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing:
+    /// - `Ok(Cert)` - Certificate information if successful
+    /// - `Err(CheckSSLError)` - Error details if the check fails
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use checkssl::CheckSSL;
     ///
     /// match CheckSSL::from_domain("rust-lang.org".to_string()) {
-    ///   Ok(certificate) => {
-    ///     // do something with certificate
-    ///     assert!(certificate.server.is_valid);
-    ///   }
-    ///   Err(e) => {
-    ///     // ssl invalid
-    ///     eprintln!("{}", e);
-    ///   }
+    ///     Ok(certificate) => {
+    ///         println!("Certificate valid: {}", certificate.server.is_valid);
+    ///         println!("Common name: {}", certificate.server.common_name);
+    ///         println!("Days to expiration: {}", certificate.server.days_to_expiration);
+    ///     }
+    ///     Err(e) => {
+    ///         eprintln!("Certificate check failed: {}", e);
+    ///     }
     /// }
     /// ```
-    pub fn from_domain(domain: String) -> Result<Cert, std::io::Error> {
+    pub fn from_domain(domain: String) -> Result<Cert, CheckSSLError> {
         Self::from_domain_with_config(domain, CheckSSLConfig::default())
     }
 
-    /// Check ssl from domain with custom configuration (blocking)
-    pub fn from_domain_with_config(domain: String, config: CheckSSLConfig) -> Result<Cert, std::io::Error> {
+    /// Check SSL certificate with custom configuration.
+    ///
+    /// Allows customization of timeout and port settings for the certificate check.
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to check
+    /// * `config` - Custom configuration for the check
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::{CheckSSL, CheckSSLConfig};
+    /// use std::time::Duration;
+    ///
+    /// let config = CheckSSLConfig {
+    ///     timeout: Duration::from_secs(10),
+    ///     port: 8443,
+    /// };
+    ///
+    /// match CheckSSL::from_domain_with_config("example.com".to_string(), config) {
+    ///     Ok(cert) => println!("Certificate valid: {}", cert.server.is_valid),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// ```
+    pub fn from_domain_with_config(domain: String, config: CheckSSLConfig) -> Result<Cert, CheckSSLError> {
         Self::check_cert_blocking(domain, config)
     }
 
-    /// Check ssl from domain (non-blocking)
-    pub fn from_domain_async(domain: String) -> Pin<Box<dyn Future<Output = Result<Cert, std::io::Error>> + Send>> {
+    /// Check SSL certificate asynchronously.
+    ///
+    /// Returns a future that can be awaited for the certificate check result.
+    /// Uses default configuration (port 443, 5 second timeout).
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to check
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() {
+    /// use checkssl::CheckSSL;
+    ///
+    /// let future = CheckSSL::from_domain_async("rust-lang.org".to_string());
+    /// match future.await {
+    ///     Ok(cert) => println!("Certificate valid: {}", cert.server.is_valid),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// # }
+    /// ```
+    pub fn from_domain_async(domain: String) -> Pin<Box<dyn Future<Output = Result<Cert, CheckSSLError>> + Send>> {
         Self::from_domain_async_with_config(domain, CheckSSLConfig::default())
     }
 
     /// Check ssl from domain with custom configuration (non-blocking)
-    pub fn from_domain_async_with_config(domain: String, config: CheckSSLConfig) -> Pin<Box<dyn Future<Output = Result<Cert, std::io::Error>> + Send>> {
+    pub fn from_domain_async_with_config(domain: String, config: CheckSSLConfig) -> Pin<Box<dyn Future<Output = Result<Cert, CheckSSLError>> + Send>> {
         Box::pin(async move {
             Self::check_cert_blocking(domain, config)
         })
     }
 
-    fn check_cert_blocking(domain: String, config: CheckSSLConfig) -> Result<Cert, std::io::Error> {
+    fn check_cert_blocking(domain: String, config: CheckSSLConfig) -> Result<Cert, CheckSSLError> {
 
         let (sender, receiver) = mpsc::channel();
         let timeout = config.timeout;
@@ -152,7 +284,7 @@ impl CheckSSL {
             let dnnn = dnn.as_str();
             let site = match webpki::DNSNameRef::try_from_ascii_str(dnnn) {
                 Ok(val) => val,
-                Err(e) => return Err(Error::new(ErrorKind::InvalidInput, e.to_string())),
+                Err(e) => return Err(CheckSSLError::InvalidDomainError(e.to_string())),
             };
     
             match format!("{}:{}", domain.clone().as_str(), port).to_socket_addrs(){
@@ -230,7 +362,7 @@ impl CheckSSL {
     
                                     let x509cert = match parse_x509_der(certificate.as_ref()) {
                                         Ok((_, x509cert)) => x509cert,
-                                        Err(e) => return Err(Error::new(ErrorKind::Other, e.to_string())),
+                                        Err(e) => return Err(CheckSSLError::CertificateParseError(e.to_string())),
                                     };
                     
                                     let is_ca = match x509cert.tbs_certificate.basic_constraints() {
@@ -262,7 +394,7 @@ impl CheckSSL {
                                             Ok(s) => {
                                                 intermediate_cert.signature_algorithm = s.to_string();
                                             }
-                                            Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                            Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                         }
 
                                         // Extract public key algorithm from the signature algorithm
@@ -316,7 +448,7 @@ impl CheckSSL {
                                                         intermediate_cert.issuer_cn = rdn_content;
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                         intermediate_cert.issuer = issuer_full.join(", ");
@@ -335,7 +467,7 @@ impl CheckSSL {
                                                         _ => {}
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                     } else {
@@ -351,7 +483,7 @@ impl CheckSSL {
                                             Ok(s) => {
                                                 server_cert.signature_algorithm = s.to_string();
                                             }
-                                            Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                            Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                         }
 
                                         // Extract public key algorithm from the signature algorithm
@@ -424,7 +556,7 @@ impl CheckSSL {
                                                         server_cert.issuer_cn = rdn_content;
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                         server_cert.issuer = issuer_full.join(", ");
@@ -443,7 +575,7 @@ impl CheckSSL {
                                                         _ => {}
                                                     }
                                                 }
-                                                Err(_e) =>  return Err(Error::new(ErrorKind::Other, "Error converting Oid to Nid".to_string())),
+                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
                                             }
                                         }
                                     }
@@ -462,18 +594,18 @@ impl CheckSSL {
 
                                     }, // everything good
                                     Err(_) => {
-                                        return Err(Error::new(ErrorKind::Other, "Error sending message to main thread".to_string()));
+                                        return Err(CheckSSLError::NetworkError("Error sending message to main thread".to_string()));
                                     }, // we have been released, don't panic
                                 }
                          
                             } else {
-                                Err(Error::new(ErrorKind::NotFound, "certificate not found".to_string()))
+                                Err(CheckSSLError::CertificateParseError("certificate not found".to_string()))
                             }
                         },
-                        None => return Err(Error::new(ErrorKind::InvalidInput, "empty".to_string()))
+                        None => return Err(CheckSSLError::DnsResolutionError("empty socket address".to_string()))
                     }
                 },
-                Err(e) => return Err(Error::new(ErrorKind::InvalidInput, e.to_string()))
+                Err(e) => return Err(CheckSSLError::DnsResolutionError(e.to_string()))
             }
     
 
@@ -491,45 +623,10 @@ impl CheckSSL {
             Ok(dat) => {
                 return Ok(dat);
             },
-            Err(_e) => return Err(Error::new(ErrorKind::TimedOut, "Certificate check timed out".to_string()))
+            Err(_e) => return Err(CheckSSLError::TimeoutError("Certificate check timed out".to_string()))
         }
 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn main() {
-        println!("SSL: {:?}", CheckSSL::from_domain("rust-lang.org".to_string()));
-       
-    }
-
-    #[test]
-    fn test_check_ssl_server_is_valid() {
-        println!("SSL: {:?}", CheckSSL::from_domain("rust-lang.org".to_string()));
-        assert!(CheckSSL::from_domain("rust-lang.org".to_string()).unwrap().server.is_valid);
-    }
-
-    #[test]
-    fn test_check_ssl_server_is_invalid() {
-        let actual = CheckSSL::from_domain("expired.badssl.com".to_string());
-        // The test may fail with either InvalidData or TimedOut depending on the SSL verification
-        assert!(actual.is_err());
-    }
-
-    #[test]
-    fn test_check_ssl_with_custom_config() {
-        let config = CheckSSLConfig {
-            timeout: Duration::from_secs(10),
-            port: 443,
-        };
-        let result = CheckSSL::from_domain_with_config("rust-lang.org".to_string(), config);
-        assert!(result.is_ok());
-        let cert = result.unwrap();
-        assert!(cert.server.is_valid);
-        assert!(!cert.server.fingerprint_sha256.is_empty());
-        assert!(!cert.server.public_key_algorithm.is_empty());
-    }
-}
+mod tests;
