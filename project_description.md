@@ -239,7 +239,7 @@ MIT License - See LICENSE file for details
 
 ## Progress Summary
 
-### Completed Tasks (12/20 - 60%)
+### Completed Tasks (15/21 - 71%)
 1. ✅ Created comprehensive project documentation
 2. ✅ Implemented custom error types with detailed error messages
 3. ✅ Added 17+ unit tests covering various certificate scenarios
@@ -251,12 +251,13 @@ MIT License - See LICENSE file for details
 9. ✅ Added comprehensive API documentation with examples
 10. ✅ Implemented custom root certificate store support
 11. ✅ Added wildcard certificate validation in chain validator
+12. ✅ Ensured cross-platform compatibility (Windows, Linux, macOS)
+13. ✅ Implemented OCSP checking for certificate revocation status
+14. ✅ Added SNI (Server Name Indication) support with tests
 
-### Remaining Tasks (40%)
+### Remaining Tasks (29%)
 - GitHub Actions workflows for CI/CD (requires workflow permissions)
-- OCSP checking for certificate revocation status
 - CRL (Certificate Revocation List) checking
-- SNI (Server Name Indication) support
 - mTLS (mutual TLS) validation
 - Certificate monitoring with alerting
 - Connection pooling for performance
