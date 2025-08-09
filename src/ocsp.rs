@@ -63,7 +63,22 @@ pub struct OcspRequest {
 }
 
 impl OcspRequest {
-    /// Create a new OCSP request
+    /// Create a new OCSP request for checking certificate revocation status.
+    ///
+    /// # Arguments
+    ///
+    /// * `cert_der` - The certificate to check in DER format
+    /// * `issuer_der` - The issuer certificate in DER format
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::OcspRequest;
+    ///
+    /// let cert_der = vec![]; // Your certificate bytes
+    /// let issuer_der = vec![]; // Issuer certificate bytes
+    /// let request = OcspRequest::new(cert_der, issuer_der);
+    /// ```
     pub fn new(cert_der: Vec<u8>, issuer_der: Vec<u8>) -> Self {
         OcspRequest {
             cert_der,
@@ -72,7 +87,23 @@ impl OcspRequest {
         }
     }
 
-    /// Set the OCSP responder URL
+    /// Set the OCSP responder URL explicitly.
+    ///
+    /// This method allows you to override the OCSP responder URL instead of
+    /// extracting it from the certificate's Authority Information Access extension.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The OCSP responder URL (e.g., "http://ocsp.example.com")
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::OcspRequest;
+    ///
+    /// let request = OcspRequest::new(cert_der, issuer_der)
+    ///     .with_responder_url("http://ocsp.example.com".to_string());
+    /// ```
     pub fn with_responder_url(mut self, url: String) -> Self {
         self.responder_url = Some(url);
         self
@@ -180,7 +211,32 @@ impl OcspRequest {
         Ok(request)
     }
 
-    /// Send OCSP request and get response
+    /// Send the OCSP request to the responder and get the response.
+    ///
+    /// This method sends an HTTP POST request to the OCSP responder with the
+    /// certificate information and returns the parsed response.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - Maximum time to wait for the OCSP responder
+    ///
+    /// # Returns
+    ///
+    /// Returns an `OcspResponse` containing the raw response data, or an error if:
+    /// - No responder URL is set
+    /// - Network connection fails
+    /// - Response parsing fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::OcspRequest;
+    /// use std::time::Duration;
+    ///
+    /// let mut request = OcspRequest::new(cert_der, issuer_der);
+    /// request.extract_responder_url()?;
+    /// let response = request.send_request(Duration::from_secs(5))?;
+    /// ```
     pub fn send_request(&self, timeout: Duration) -> Result<OcspResponse, CheckSSLError> {
         let url = self.responder_url.as_ref()
             .ok_or_else(|| CheckSSLError::ValidationError("No OCSP responder URL set".to_string()))?;
@@ -233,12 +289,55 @@ pub struct OcspResponse {
 }
 
 impl OcspResponse {
-    /// Create new OCSP response from bytes
+    /// Create a new OCSP response from raw response bytes.
+    ///
+    /// This is typically called internally after receiving a response from
+    /// an OCSP responder.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Raw OCSP response bytes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::OcspResponse;
+    ///
+    /// let response_bytes = vec![]; // Response from OCSP responder
+    /// let response = OcspResponse::new(response_bytes);
+    /// ```
     pub fn new(data: Vec<u8>) -> Self {
         OcspResponse { data }
     }
 
-    /// Parse the OCSP response to get certificate status
+    /// Parse the OCSP response to determine the certificate's revocation status.
+    ///
+    /// This method analyzes the OCSP response data to determine whether the
+    /// certificate is good, revoked, or has an unknown status.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `OcspStatus` indicating:
+    /// - `Good` - Certificate is valid and not revoked
+    /// - `Revoked` - Certificate has been revoked (includes time and reason)
+    /// - `Unknown` - Certificate status cannot be determined
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response data is invalid or cannot be parsed.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::{OcspResponse, OcspStatus};
+    ///
+    /// let response = OcspResponse::new(response_bytes);
+    /// match response.get_status()? {
+    ///     OcspStatus::Good => println!("Certificate is valid"),
+    ///     OcspStatus::Revoked { .. } => println!("Certificate is revoked"),
+    ///     OcspStatus::Unknown => println!("Status unknown"),
+    /// }
+    /// ```
     pub fn get_status(&self) -> Result<OcspStatus, CheckSSLError> {
         // Simplified OCSP response parsing
         // In production, use proper ASN.1 parsing
@@ -268,7 +367,24 @@ impl OcspResponse {
         }
     }
 
-    /// Get the raw response bytes
+    /// Get the raw OCSP response bytes.
+    ///
+    /// This method provides access to the underlying response data for
+    /// advanced use cases or debugging.
+    ///
+    /// # Returns
+    ///
+    /// A byte slice containing the raw OCSP response
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::OcspResponse;
+    ///
+    /// let response = OcspResponse::new(response_bytes);
+    /// let raw_data = response.as_bytes();
+    /// println!("Response size: {} bytes", raw_data.len());
+    /// ```
     pub fn as_bytes(&self) -> &[u8] {
         &self.data
     }

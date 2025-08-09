@@ -33,6 +33,18 @@ pub struct CustomRootStoreBuilder {
 
 impl CustomRootStoreBuilder {
     /// Create a new custom root store builder.
+    ///
+    /// Creates an empty root certificate store that can be populated
+    /// with certificates using the various `add_*` methods.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::CustomRootStoreBuilder;
+    ///
+    /// let builder = CustomRootStoreBuilder::new();
+    /// assert!(builder.is_empty());
+    /// ```
     pub fn new() -> Self {
         CustomRootStoreBuilder {
             store: RootCertStore::empty(),
@@ -180,12 +192,42 @@ impl CustomRootStoreBuilder {
         self.store
     }
 
-    /// Get the number of certificates in the store.
+    /// Get the number of certificates currently in the store.
+    ///
+    /// # Returns
+    ///
+    /// The count of root certificates added to the store.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::CustomRootStoreBuilder;
+    ///
+    /// let builder = CustomRootStoreBuilder::new()
+    ///     .with_webpki_roots();
+    /// println!("Store contains {} certificates", builder.len());
+    /// ```
     pub fn len(&self) -> usize {
         self.store.len()
     }
 
     /// Check if the store is empty.
+    ///
+    /// # Returns
+    ///
+    /// `true` if no certificates have been added to the store, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::CustomRootStoreBuilder;
+    ///
+    /// let builder = CustomRootStoreBuilder::new();
+    /// assert!(builder.is_empty());
+    ///
+    /// let builder_with_roots = builder.with_webpki_roots();
+    /// assert!(!builder_with_roots.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.store.is_empty()
     }
