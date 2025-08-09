@@ -7,6 +7,21 @@ pub struct ChainValidator {
 }
 
 impl ChainValidator {
+    /// Create a new certificate chain validator.
+    ///
+    /// # Arguments
+    ///
+    /// * `certificates` - Vector of DER-encoded certificates, ordered from
+    ///   server certificate to root certificate
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use checkssl::ChainValidator;
+    ///
+    /// let certificates = vec![server_cert_der, intermediate_cert_der, root_cert_der];
+    /// let validator = ChainValidator::new(certificates);
+    /// ```
     pub fn new(certificates: Vec<Vec<u8>>) -> Self {
         ChainValidator { certificates }
     }
@@ -95,7 +110,9 @@ impl ChainValidator {
         // Check for self-signed root
         if let Some(last_cert) = parsed_certs.last() {
             if last_cert.issuer() == last_cert.subject() {
-                validation_result.path.last_mut().unwrap().is_ca = true;
+                if let Some(last_path_entry) = validation_result.path.last_mut() {
+                    last_path_entry.is_ca = true;
+                }
             } else {
                 validation_result.issues.push(
                     "Chain does not end with a self-signed root certificate".to_string(),
@@ -221,9 +238,16 @@ impl ChainValidator {
         // Handle wildcard certificates
         if pattern.starts_with("*.") {
             let suffix = &pattern[2..];
-            if let Some(hostname_suffix) = hostname.split('.').skip(1).next() {
-                return suffix.eq_ignore_ascii_case(hostname_suffix);
+            // Get everything after the first dot in the hostname
+            if let Some(dot_pos) = hostname.find('.') {
+                let hostname_suffix = &hostname[dot_pos + 1..];
+                // Wildcard only matches one level, so ensure no additional dots before the suffix
+                let prefix = &hostname[..dot_pos];
+                if !prefix.contains('.') && suffix.eq_ignore_ascii_case(hostname_suffix) {
+                    return true;
+                }
             }
+            return false;
         }
         
         pattern.eq_ignore_ascii_case(hostname)
