@@ -1,4 +1,4 @@
-use checkssl::{CheckSSL, CheckSSLConfig};
+use checkssl::{CheckSSL, CheckSSLConfig, CertificateFormat, check_certificate_from_file, analyze_certificate, generate_security_report, batch_check_domains, BatchConfig, BatchStatistics};
 use std::env;
 use std::process;
 use std::time::Duration;
@@ -16,6 +16,9 @@ fn main() {
     let mut timeout = 5u64;
     let mut json_output = false;
     let mut verbose = false;
+    let mut analyze_security = false;
+    let mut file_path = String::new();
+    let mut batch_file = String::new();
     
     let mut i = 1;
     while i < args.len() {
@@ -54,6 +57,27 @@ fn main() {
             "-v" | "--verbose" => {
                 verbose = true;
             }
+            "-s" | "--security" => {
+                analyze_security = true;
+            }
+            "-f" | "--file" => {
+                if i + 1 < args.len() {
+                    file_path = args[i + 1].clone();
+                    i += 1;
+                } else {
+                    eprintln!("Error: --file requires a path");
+                    process::exit(1);
+                }
+            }
+            "-b" | "--batch" => {
+                if i + 1 < args.len() {
+                    batch_file = args[i + 1].clone();
+                    i += 1;
+                } else {
+                    eprintln!("Error: --batch requires a file path");
+                    process::exit(1);
+                }
+            }
             _ => {
                 if !args[i].starts_with('-') && domain.is_empty() {
                     domain = args[i].clone();
@@ -64,6 +88,18 @@ fn main() {
             }
         }
         i += 1;
+    }
+    
+    // Handle batch processing
+    if !batch_file.is_empty() {
+        process_batch_file(&batch_file, port, timeout);
+        return;
+    }
+    
+    // Handle file certificate checking
+    if !file_path.is_empty() {
+        process_certificate_file(&file_path, json_output, verbose, analyze_security);
+        return;
     }
     
     if domain.is_empty() {
@@ -83,6 +119,12 @@ fn main() {
     
     match CheckSSL::from_domain_with_config(domain.clone(), config) {
         Ok(cert) => {
+            if analyze_security {
+                let analysis = analyze_certificate(&cert);
+                let report = generate_security_report(&analysis);
+                println!("\n{}", report);
+            }
+            
             if json_output {
                 print_json_output(&cert);
             } else {
@@ -130,6 +172,9 @@ fn print_help(program: &str) {
     println!("  -t, --timeout <SECS>  Connection timeout in seconds (default: 5)");
     println!("  -j, --json            Output in JSON format");
     println!("  -v, --verbose         Show detailed certificate information");
+    println!("  -s, --security        Analyze certificate security");
+    println!("  -f, --file <PATH>     Check certificate from PEM/DER file");
+    println!("  -b, --batch <FILE>    Check multiple domains from file");
     println!();
     println!("Exit Codes:");
     println!("  0  - Certificate is valid");
@@ -258,4 +303,102 @@ fn escape_json(s: &str) -> String {
             c => c.to_string(),
         })
         .collect()
+}
+
+fn process_certificate_file(path: &str, json_output: bool, verbose: bool, analyze_security: bool) {
+    use std::path::Path;
+    
+    match check_certificate_from_file(Path::new(path), CertificateFormat::Auto) {
+        Ok(cert) => {
+            if analyze_security {
+                let analysis = analyze_certificate(&cert);
+                let report = generate_security_report(&analysis);
+                println!("{}", report);
+            }
+            
+            if json_output {
+                print_json_output(&cert);
+            } else {
+                print_certificate_info(&cert, verbose);
+            }
+            
+            if !cert.server.is_valid {
+                process::exit(2);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error checking certificate file: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
+fn process_batch_file(batch_file: &str, port: u16, timeout: u64) {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    use std::path::Path;
+    
+    let file = match File::open(Path::new(batch_file)) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Error opening batch file: {}", e);
+            process::exit(1);
+        }
+    };
+    
+    let reader = BufReader::new(file);
+    let mut domains = Vec::new();
+    
+    for line in reader.lines() {
+        if let Ok(domain) = line {
+            let domain = domain.trim();
+            if !domain.is_empty() && !domain.starts_with('#') {
+                domains.push(domain.to_string());
+            }
+        }
+    }
+    
+    if domains.is_empty() {
+        eprintln!("No domains found in batch file");
+        process::exit(1);
+    }
+    
+    println!("Checking {} domains...", domains.len());
+    
+    let config = BatchConfig {
+        max_concurrent: 5,
+        check_config: CheckSSLConfig {
+            timeout: Duration::from_secs(timeout),
+            port,
+        },
+        continue_on_error: true,
+        delay_between_checks: None,
+    };
+    
+    let results = batch_check_domains(domains, config);
+    let stats = BatchStatistics::from_results(&results, 30);
+    
+    // Print results
+    println!("\nResults:");
+    println!("{}", "=".repeat(60));
+    
+    for result in &results {
+        match &result.result {
+            Ok(cert) => {
+                println!("✓ {} - Valid, expires in {} days", 
+                    result.domain, 
+                    cert.server.days_to_expiration);
+            }
+            Err(e) => {
+                println!("✗ {} - Error: {}", result.domain, e);
+            }
+        }
+    }
+    
+    println!("\n{}", "=".repeat(60));
+    stats.print_summary();
+    
+    if stats.failed > 0 {
+        process::exit(1);
+    }
 }
