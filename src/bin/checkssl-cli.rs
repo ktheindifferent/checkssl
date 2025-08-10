@@ -222,10 +222,10 @@ fn print_certificate_info(cert: &checkssl::Cert, verbose: bool) {
         println!("SHA256 Fingerprint: {}", cert.server.fingerprint_sha256);
         println!("SHA1 Fingerprint: {}", cert.server.fingerprint_sha1);
         
-        let not_before = chrono::NaiveDateTime::from_timestamp_opt(cert.server.not_before, 0)
+        let not_before = chrono::DateTime::from_timestamp(cert.server.not_before, 0)
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "Unknown".to_string());
-        let not_after = chrono::NaiveDateTime::from_timestamp_opt(cert.server.not_after, 0)
+        let not_after = chrono::DateTime::from_timestamp(cert.server.not_after, 0)
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "Unknown".to_string());
         

@@ -41,7 +41,7 @@ fn test_sni_virtual_hosts() {
     let virtual_hosts = vec![
         ("github.com", "github.com"),
         ("www.github.com", "github.com"),
-        ("api.github.com", "api.github.com"),
+        ("api.github.com", "github.com"),  // Uses wildcard *.github.com
     ];
     
     for (test_domain, expected_pattern) in virtual_hosts {
@@ -50,11 +50,17 @@ fn test_sni_virtual_hosts() {
         if let Ok(cert) = result {
             // Check that we got the correct certificate for the virtual host
             let cn = cert.server.common_name.to_lowercase();
+            // Check if CN matches or if it's a wildcard that covers the domain
+            let matches = cn.contains(expected_pattern) || 
+                          cn.starts_with("*.") && test_domain.ends_with(&cn[2..]) ||
+                          cert.server.sans.iter().any(|san| {
+                              san.contains(expected_pattern) ||
+                              (san.starts_with("*.") && test_domain.ends_with(&san[2..]))
+                          });
             assert!(
-                cn.contains(expected_pattern) || 
-                cert.server.sans.iter().any(|san| san.contains(expected_pattern)),
-                "SNI failed for {}: got CN={}, expected to contain {}",
-                test_domain, cn, expected_pattern
+                matches,
+                "SNI failed for {}: got CN={}, SANs={:?}",
+                test_domain, cn, cert.server.sans
             );
         }
     }

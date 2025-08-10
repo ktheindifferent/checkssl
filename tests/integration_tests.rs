@@ -27,15 +27,14 @@ fn test_badssl_certificates() {
     struct TestCase {
         domain: &'static str,
         should_fail: bool,
-        error_type: Option<&'static str>,
     }
     
     let test_cases = vec![
-        TestCase { domain: "expired.badssl.com", should_fail: true, error_type: Some("expired") },
-        TestCase { domain: "wrong.host.badssl.com", should_fail: true, error_type: Some("wrong_host") },
-        TestCase { domain: "self-signed.badssl.com", should_fail: true, error_type: Some("self_signed") },
-        TestCase { domain: "untrusted-root.badssl.com", should_fail: true, error_type: Some("untrusted") },
-        TestCase { domain: "sha256.badssl.com", should_fail: false, error_type: None },
+        TestCase { domain: "expired.badssl.com", should_fail: true },
+        TestCase { domain: "wrong.host.badssl.com", should_fail: true },
+        TestCase { domain: "self-signed.badssl.com", should_fail: true },
+        TestCase { domain: "untrusted-root.badssl.com", should_fail: true },
+        TestCase { domain: "sha256.badssl.com", should_fail: false },
     ];
     
     for tc in test_cases {
@@ -162,7 +161,8 @@ fn test_certificate_algorithms() {
             assert!(!cert.server.public_key_algorithm.is_empty());
             
             let valid_sig_algos = vec!["SHA256WithRSAEncryption", "SHA384WithRSAEncryption", 
-                                       "SHA256WithECDSA", "SHA384WithECDSA"];
+                                       "SHA256WithECDSA", "SHA384WithECDSA",
+                                       "RSA-SHA256", "RSA-SHA384", "ECDSA-SHA256", "ECDSA-SHA384"];
             let has_valid_algo = valid_sig_algos.iter()
                 .any(|algo| cert.server.signature_algorithm.contains(algo));
             assert!(has_valid_algo, "Unexpected signature algorithm: {}", 
