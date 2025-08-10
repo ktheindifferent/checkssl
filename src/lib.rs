@@ -52,12 +52,104 @@ use std::future::Future;
 use std::pin::Pin;
 use sha2::{Sha256, Digest as Sha2Digest};
 use sha1::{Sha1};
+use x509_parser::x509::X509Certificate;
 
 pub use error::CheckSSLError;
 pub use chain_validator::{ChainValidator, ChainValidationResult, CertificateInfo};
 pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
 pub use platform::{platform_name, architecture, get_system_cert_paths};
 pub use ocsp::{check_ocsp_status, OcspStatus, OcspRequest, OcspResponse, RevocationReason};
+
+/// Helper function to extract RDN value from a certificate attribute
+fn extract_rdn_value(rdn_seq: &x509_parser::x509::RelativeDistinguishedName) -> Result<String, CheckSSLError> {
+    rdn_seq.set.first()
+        .ok_or_else(|| CheckSSLError::CertificateParseError("No attribute in RDN".to_string()))
+        .and_then(|attr| {
+            attr.attr_value.content.as_str()
+                .map(|s| s.to_string())
+                .map_err(|_| CheckSSLError::CertificateParseError("Failed to extract RDN value".to_string()))
+        })
+}
+
+/// Helper function to extract public key algorithm from signature algorithm
+fn extract_public_key_algorithm(signature_algorithm: &str) -> String {
+    if signature_algorithm.contains("RSA") {
+        "RSA".to_string()
+    } else if signature_algorithm.contains("ECDSA") {
+        "EC".to_string()
+    } else if signature_algorithm.contains("DSA") {
+        "DSA".to_string()
+    } else {
+        "Unknown".to_string()
+    }
+}
+
+/// Helper function to extract key usage flags
+fn extract_key_usage(key_usage: &x509_parser::extensions::KeyUsage) -> Vec<String> {
+    let mut usage = Vec::new();
+    if key_usage.digital_signature() { usage.push("Digital Signature".to_string()); }
+    if key_usage.non_repudiation() { usage.push("Non Repudiation".to_string()); }
+    if key_usage.key_encipherment() { usage.push("Key Encipherment".to_string()); }
+    if key_usage.data_encipherment() { usage.push("Data Encipherment".to_string()); }
+    if key_usage.key_agreement() { usage.push("Key Agreement".to_string()); }
+    if key_usage.key_cert_sign() { usage.push("Key Cert Sign".to_string()); }
+    if key_usage.crl_sign() { usage.push("CRL Sign".to_string()); }
+    if key_usage.encipher_only() { usage.push("Encipher Only".to_string()); }
+    if key_usage.decipher_only() { usage.push("Decipher Only".to_string()); }
+    usage
+}
+
+/// Helper function to process certificate subject/issuer fields
+fn process_certificate_names(x509cert: &X509Certificate, is_issuer: bool) -> Result<(String, String), CheckSSLError> {
+    let name = if is_issuer { x509cert.issuer() } else { x509cert.subject() };
+    let mut full_name = Vec::new();
+    let mut cn = String::new();
+    
+    for rdn_seq in &name.rdn_seq {
+        if let Some(attr) = rdn_seq.set.first() {
+            let attr_name = oid2sn(&attr.attr_type)
+                .map_err(|_| CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string()))?;
+            let rdn_content = extract_rdn_value(rdn_seq)?;
+            full_name.push(format!("{}={}", attr_name, rdn_content));
+            if attr_name == "CN" {
+                cn = rdn_content;
+            }
+        }
+    }
+    
+    Ok((full_name.join(", "), cn))
+}
+
+/// Helper function to populate certificate subject fields
+fn populate_subject_fields(x509cert: &X509Certificate) -> Result<(String, String, String, String, String, String), CheckSSLError> {
+    let subject = x509cert.subject();
+    let mut common_name = String::new();
+    let mut country = String::new();
+    let mut state = String::new();
+    let mut locality = String::new();
+    let mut organization = String::new();
+    let mut organizational_unit = String::new();
+    
+    for rdn_seq in &subject.rdn_seq {
+        if let Some(attr) = rdn_seq.set.first() {
+            let attr_name = oid2sn(&attr.attr_type)
+                .map_err(|_| CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string()))?;
+            let rdn_content = extract_rdn_value(rdn_seq)?;
+            
+            match attr_name {
+                "C" => country = rdn_content,
+                "ST" => state = rdn_content,
+                "L" => locality = rdn_content,
+                "CN" => common_name = rdn_content,
+                "O" => organization = rdn_content,
+                "OU" => organizational_unit = rdn_content,
+                _ => {}
+            }
+        }
+    }
+    
+    Ok((common_name, country, state, locality, organization, organizational_unit))
+}
 
 /// Information about the server's SSL certificate.
 ///
@@ -385,7 +477,7 @@ impl CheckSSL {
                                         intermediate_cert.is_valid = x509cert.validity().is_valid();
                                         intermediate_cert.not_after = x509cert.tbs_certificate.validity.not_after.timestamp();
                                         intermediate_cert.not_before = x509cert.tbs_certificate.validity.not_before.timestamp();
-                                        intermediate_cert.version = x509cert.tbs_certificate.version as i32;
+                                        intermediate_cert.version = (x509cert.tbs_certificate.version + 1) as i32;
                                         intermediate_cert.serial_number = format!("{:X}", x509cert.tbs_certificate.serial);
                                         intermediate_cert.fingerprint_sha256 = fingerprint_sha256.clone();
                                         intermediate_cert.fingerprint_sha1 = fingerprint_sha1.clone();
@@ -398,16 +490,7 @@ impl CheckSSL {
                                         }
 
                                         // Extract public key algorithm from the signature algorithm
-                                        if intermediate_cert.signature_algorithm.contains("RSA") {
-                                            intermediate_cert.public_key_algorithm = "RSA".to_string();
-                                            // Key size is not easily accessible in this version
-                                        } else if intermediate_cert.signature_algorithm.contains("ECDSA") {
-                                            intermediate_cert.public_key_algorithm = "EC".to_string();
-                                        } else if intermediate_cert.signature_algorithm.contains("DSA") {
-                                            intermediate_cert.public_key_algorithm = "DSA".to_string();
-                                        } else {
-                                            intermediate_cert.public_key_algorithm = "Unknown".to_string();
-                                        }
+                                        intermediate_cert.public_key_algorithm = extract_public_key_algorithm(&intermediate_cert.signature_algorithm);
 
                                         // Extract basic constraints path length
                                         if let Some((_, basic_constraints)) = x509cert.tbs_certificate.basic_constraints() {
@@ -416,17 +499,7 @@ impl CheckSSL {
 
                                         // Extract key usage
                                         if let Some((_, key_usage)) = x509cert.tbs_certificate.key_usage() {
-                                            let mut usage = Vec::new();
-                                            if key_usage.digital_signature() { usage.push("Digital Signature".to_string()); }
-                                            if key_usage.non_repudiation() { usage.push("Non Repudiation".to_string()); }
-                                            if key_usage.key_encipherment() { usage.push("Key Encipherment".to_string()); }
-                                            if key_usage.data_encipherment() { usage.push("Data Encipherment".to_string()); }
-                                            if key_usage.key_agreement() { usage.push("Key Agreement".to_string()); }
-                                            if key_usage.key_cert_sign() { usage.push("Key Cert Sign".to_string()); }
-                                            if key_usage.crl_sign() { usage.push("CRL Sign".to_string()); }
-                                            if key_usage.encipher_only() { usage.push("Encipher Only".to_string()); }
-                                            if key_usage.decipher_only() { usage.push("Decipher Only".to_string()); }
-                                            intermediate_cert.key_usage = usage;
+                                            intermediate_cert.key_usage = extract_key_usage(key_usage);
                                         }
                     
                                         if let Some(time_to_expiration) = x509cert.tbs_certificate.validity.time_to_expiration() {
@@ -435,46 +508,24 @@ impl CheckSSL {
                                             intermediate_cert.days_to_expiration = days as i64;
                                         }
                     
-                                        let issuer = x509cert.issuer();
-                                        let subject = x509cert.subject();
-                    
-                                        let mut issuer_full = Vec::new();
-                                        for rdn_seq in &issuer.rdn_seq {
-                                            match oid2sn(&rdn_seq.set[0].attr_type) {
-                                                Ok(s) => {
-                                                    let rdn_content = rdn_seq.set[0].attr_value.content.as_str().unwrap().to_string();
-                                                    issuer_full.push(format!("{}={}", s, rdn_content));
-                                                    if s == "CN" {
-                                                        intermediate_cert.issuer_cn = rdn_content;
-                                                    }
-                                                }
-                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
-                                            }
-                                        }
-                                        intermediate_cert.issuer = issuer_full.join(", ");
-                    
-                                        for rdn_seq in &subject.rdn_seq {
-                                            match oid2sn(&rdn_seq.set[0].attr_type) {
-                                                Ok(s) => {
-                                                    let rdn_content = rdn_seq.set[0].attr_value.content.as_str().unwrap().to_string();
-                                                    match s {
-                                                        "C" => intermediate_cert.country = rdn_content,
-                                                        "ST" => intermediate_cert.state = rdn_content,
-                                                        "L" => intermediate_cert.locality = rdn_content,
-                                                        "CN" => intermediate_cert.common_name = rdn_content,
-                                                        "O" => intermediate_cert.organization = rdn_content,
-                                                        "OU" => intermediate_cert.organizational_unit = rdn_content,
-                                                        _ => {}
-                                                    }
-                                                }
-                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
-                                            }
-                                        }
+                                        // Process issuer and subject
+                                        let (issuer_full, issuer_cn) = process_certificate_names(&x509cert, true)?;
+                                        intermediate_cert.issuer = issuer_full;
+                                        intermediate_cert.issuer_cn = issuer_cn;
+                                        
+                                        let (common_name, country, state, locality, organization, organizational_unit) = 
+                                            populate_subject_fields(&x509cert)?;
+                                        intermediate_cert.common_name = common_name;
+                                        intermediate_cert.country = country;
+                                        intermediate_cert.state = state;
+                                        intermediate_cert.locality = locality;
+                                        intermediate_cert.organization = organization;
+                                        intermediate_cert.organizational_unit = organizational_unit;
                                     } else {
                                         server_cert.is_valid = x509cert.validity().is_valid();
                                         server_cert.not_after = x509cert.tbs_certificate.validity.not_after.timestamp();
                                         server_cert.not_before = x509cert.tbs_certificate.validity.not_before.timestamp();
-                                        server_cert.version = x509cert.tbs_certificate.version as i32;
+                                        server_cert.version = (x509cert.tbs_certificate.version + 1) as i32;
                                         server_cert.serial_number = format!("{:X}", x509cert.tbs_certificate.serial);
                                         server_cert.fingerprint_sha256 = fingerprint_sha256;
                                         server_cert.fingerprint_sha1 = fingerprint_sha1;
@@ -487,30 +538,11 @@ impl CheckSSL {
                                         }
 
                                         // Extract public key algorithm from the signature algorithm
-                                        if server_cert.signature_algorithm.contains("RSA") {
-                                            server_cert.public_key_algorithm = "RSA".to_string();
-                                            // Key size is not easily accessible in this version
-                                        } else if server_cert.signature_algorithm.contains("ECDSA") {
-                                            server_cert.public_key_algorithm = "EC".to_string();
-                                        } else if server_cert.signature_algorithm.contains("DSA") {
-                                            server_cert.public_key_algorithm = "DSA".to_string();
-                                        } else {
-                                            server_cert.public_key_algorithm = "Unknown".to_string();
-                                        }
+                                        server_cert.public_key_algorithm = extract_public_key_algorithm(&server_cert.signature_algorithm);
 
                                         // Extract key usage
                                         if let Some((_, key_usage)) = x509cert.tbs_certificate.key_usage() {
-                                            let mut usage = Vec::new();
-                                            if key_usage.digital_signature() { usage.push("Digital Signature".to_string()); }
-                                            if key_usage.non_repudiation() { usage.push("Non Repudiation".to_string()); }
-                                            if key_usage.key_encipherment() { usage.push("Key Encipherment".to_string()); }
-                                            if key_usage.data_encipherment() { usage.push("Data Encipherment".to_string()); }
-                                            if key_usage.key_agreement() { usage.push("Key Agreement".to_string()); }
-                                            if key_usage.key_cert_sign() { usage.push("Key Cert Sign".to_string()); }
-                                            if key_usage.crl_sign() { usage.push("CRL Sign".to_string()); }
-                                            if key_usage.encipher_only() { usage.push("Encipher Only".to_string()); }
-                                            if key_usage.decipher_only() { usage.push("Decipher Only".to_string()); }
-                                            server_cert.key_usage = usage;
+                                            server_cert.key_usage = extract_key_usage(key_usage);
                                         }
 
                                         // Extract extended key usage
@@ -543,41 +575,19 @@ impl CheckSSL {
                                             server_cert.days_to_expiration = days as i64;
                                         }
                     
-                                        let issuer = x509cert.issuer();
-                                        let subject = x509cert.subject();
-                    
-                                        let mut issuer_full = Vec::new();
-                                        for rdn_seq in &issuer.rdn_seq {
-                                            match oid2sn(&rdn_seq.set[0].attr_type) {
-                                                Ok(s) => {
-                                                    let rdn_content = rdn_seq.set[0].attr_value.content.as_str().unwrap().to_string();
-                                                    issuer_full.push(format!("{}={}", s, rdn_content));
-                                                    if s == "CN" {
-                                                        server_cert.issuer_cn = rdn_content;
-                                                    }
-                                                }
-                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
-                                            }
-                                        }
-                                        server_cert.issuer = issuer_full.join(", ");
-                    
-                                        for rdn_seq in &subject.rdn_seq {
-                                            match oid2sn(&rdn_seq.set[0].attr_type) {
-                                                Ok(s) => {
-                                                    let rdn_content = rdn_seq.set[0].attr_value.content.as_str().unwrap().to_string();
-                                                    match s {
-                                                        "C" => server_cert.country = rdn_content,
-                                                        "ST" => server_cert.state = rdn_content,
-                                                        "L" => server_cert.locality = rdn_content,
-                                                        "CN" => server_cert.common_name = rdn_content,
-                                                        "O" => server_cert.organization = rdn_content,
-                                                        "OU" => server_cert.organizational_unit = rdn_content,
-                                                        _ => {}
-                                                    }
-                                                }
-                                                Err(_e) =>  return Err(CheckSSLError::CertificateParseError("Error converting Oid to Nid".to_string())),
-                                            }
-                                        }
+                                        // Process issuer and subject
+                                        let (issuer_full, issuer_cn) = process_certificate_names(&x509cert, true)?;
+                                        server_cert.issuer = issuer_full;
+                                        server_cert.issuer_cn = issuer_cn;
+                                        
+                                        let (common_name, country, state, locality, organization, organizational_unit) = 
+                                            populate_subject_fields(&x509cert)?;
+                                        server_cert.common_name = common_name;
+                                        server_cert.country = country;
+                                        server_cert.state = state;
+                                        server_cert.locality = locality;
+                                        server_cert.organization = organization;
+                                        server_cert.organizational_unit = organizational_unit;
                                     }
                                 }
                     
