@@ -1,10 +1,10 @@
 use checkssl::{
     RetryConfig, retry_with_backoff, RetryableError,
-    CertificateFormat, load_certificates_from_file, pem_to_der, der_to_pem,
-    BatchConfig, batch_check_domains, BatchStatistics,
+    pem_to_der, der_to_pem,
+    BatchConfig, BatchStatistics,
     CertificateCache, CacheConfig, EvictionStrategy,
     analyze_certificate, SecurityLevel, generate_security_report,
-    CheckSSLError,
+    CheckSSLError, IntermediateCert,
 };
 use std::time::Duration;
 
@@ -84,7 +84,7 @@ fn test_batch_configuration() {
 
 #[test]
 fn test_security_analysis_levels() {
-    use checkssl::{Cert, ServerCert, IntermediateCert};
+    use checkssl::{Cert, ServerCert};
     
     // Create a test certificate with weak algorithm
     let weak_cert = Cert {
@@ -139,7 +139,7 @@ fn test_security_analysis_levels() {
 
 #[test]
 fn test_security_report_generation() {
-    use checkssl::{Cert, ServerCert, IntermediateCert};
+    use checkssl::{Cert, ServerCert};
     
     let cert = Cert {
         server: ServerCert {
@@ -168,7 +168,7 @@ fn test_security_report_generation() {
 
 #[test]
 fn test_cache_eviction_strategies() {
-    use checkssl::{Cert, ServerCert, IntermediateCert};
+    use checkssl::{Cert, ServerCert};
     
     // Test LRU eviction
     let config = CacheConfig {
@@ -295,7 +295,6 @@ fn test_certificate_format_detection() {
 #[test]
 #[ignore] // Requires actual certificate files
 fn test_load_certificates_from_file() {
-    use std::path::Path;
     
     // This test would require actual certificate files
     // Uncomment and adjust path when testing with real certificates

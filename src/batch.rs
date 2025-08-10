@@ -295,7 +295,6 @@ pub fn export_batch_results_csv(results: &[BatchCheckResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CheckSSLError;
 
     #[test]
     fn test_batch_config_default() {
@@ -358,5 +357,53 @@ mod tests {
         
         let csv = export_batch_results_csv(&results);
         assert!(csv.contains("example.com,true,,90,example.com,Test CA,100"));
+    }
+
+    #[test]
+    fn test_batch_check_domains_grouped() {
+        use std::collections::HashMap;
+        use crate::CheckSSLConfig;
+        use std::time::Duration;
+        
+        // Create test domain groups
+        let mut domain_groups = HashMap::new();
+        
+        // Group 1: Search engines
+        let search_domains = vec![
+            "google.com".to_string(),
+            "bing.com".to_string(),
+        ];
+        let search_config = CheckSSLConfig {
+            timeout: Duration::from_secs(5),
+            port: 443,
+        };
+        domain_groups.insert("search_engines".to_string(), (search_domains, search_config));
+        
+        // Group 2: Code repositories
+        let repo_domains = vec![
+            "github.com".to_string(),
+            "gitlab.com".to_string(),
+        ];
+        let repo_config = CheckSSLConfig {
+            timeout: Duration::from_secs(10),
+            port: 443,
+        };
+        domain_groups.insert("repositories".to_string(), (repo_domains, repo_config));
+        
+        // Test grouped batch checking
+        let results = batch_check_domains_grouped(domain_groups, 2);
+        
+        // Verify we have results for both groups
+        assert_eq!(results.len(), 2);
+        assert!(results.contains_key("search_engines"));
+        assert!(results.contains_key("repositories"));
+        
+        // Verify each group has results
+        if let Some(search_results) = results.get("search_engines") {
+            assert_eq!(search_results.len(), 2);
+        }
+        if let Some(repo_results) = results.get("repositories") {
+            assert_eq!(repo_results.len(), 2);
+        }
     }
 }
