@@ -31,6 +31,11 @@ mod chain_validator;
 mod custom_roots;
 mod platform;
 mod ocsp;
+mod retry;
+mod pem_support;
+mod batch;
+mod cache;
+mod crypto_analysis;
 
 use std::sync::{Arc};
 use rustls::Session;
@@ -59,9 +64,14 @@ pub use chain_validator::{ChainValidator, ChainValidationResult, CertificateInfo
 pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
 pub use platform::{platform_name, architecture, get_system_cert_paths};
 pub use ocsp::{check_ocsp_status, OcspStatus, OcspRequest, OcspResponse, RevocationReason};
+pub use retry::{RetryConfig, retry_with_backoff, RetryableError};
+pub use pem_support::{CertificateFormat, load_certificates_from_file, check_certificate_from_file, der_to_pem, pem_to_der};
+pub use batch::{batch_check_domains, BatchConfig, BatchCheckResult, BatchStatistics, export_batch_results_json, export_batch_results_csv};
+pub use cache::{CertificateCache, CacheConfig, EvictionStrategy, global_cache, check_with_cache};
+pub use crypto_analysis::{analyze_certificate, CryptoAnalysis, SecurityLevel, generate_security_report};
 
 /// Helper function to extract RDN value from a certificate attribute
-fn extract_rdn_value(rdn_seq: &x509_parser::x509::RelativeDistinguishedName) -> Result<String, CheckSSLError> {
+pub(crate) fn extract_rdn_value(rdn_seq: &x509_parser::x509::RelativeDistinguishedName) -> Result<String, CheckSSLError> {
     rdn_seq.set.first()
         .ok_or_else(|| CheckSSLError::CertificateParseError("No attribute in RDN".to_string()))
         .and_then(|attr| {
@@ -72,7 +82,7 @@ fn extract_rdn_value(rdn_seq: &x509_parser::x509::RelativeDistinguishedName) -> 
 }
 
 /// Helper function to extract public key algorithm from signature algorithm
-fn extract_public_key_algorithm(signature_algorithm: &str) -> String {
+pub(crate) fn extract_public_key_algorithm(signature_algorithm: &str) -> String {
     if signature_algorithm.contains("RSA") {
         "RSA".to_string()
     } else if signature_algorithm.contains("ECDSA") {
@@ -85,7 +95,7 @@ fn extract_public_key_algorithm(signature_algorithm: &str) -> String {
 }
 
 /// Helper function to extract key usage flags
-fn extract_key_usage(key_usage: &x509_parser::extensions::KeyUsage) -> Vec<String> {
+pub(crate) fn extract_key_usage(key_usage: &x509_parser::extensions::KeyUsage) -> Vec<String> {
     let mut usage = Vec::new();
     if key_usage.digital_signature() { usage.push("Digital Signature".to_string()); }
     if key_usage.non_repudiation() { usage.push("Non Repudiation".to_string()); }
@@ -100,7 +110,7 @@ fn extract_key_usage(key_usage: &x509_parser::extensions::KeyUsage) -> Vec<Strin
 }
 
 /// Helper function to process certificate subject/issuer fields
-fn process_certificate_names(x509cert: &X509Certificate, is_issuer: bool) -> Result<(String, String), CheckSSLError> {
+pub(crate) fn process_certificate_names(x509cert: &X509Certificate, is_issuer: bool) -> Result<(String, String), CheckSSLError> {
     let name = if is_issuer { x509cert.issuer() } else { x509cert.subject() };
     let mut full_name = Vec::new();
     let mut cn = String::new();
@@ -121,7 +131,7 @@ fn process_certificate_names(x509cert: &X509Certificate, is_issuer: bool) -> Res
 }
 
 /// Helper function to populate certificate subject fields
-fn populate_subject_fields(x509cert: &X509Certificate) -> Result<(String, String, String, String, String, String), CheckSSLError> {
+pub(crate) fn populate_subject_fields(x509cert: &X509Certificate) -> Result<(String, String, String, String, String, String), CheckSSLError> {
     let subject = x509cert.subject();
     let mut common_name = String::new();
     let mut country = String::new();
@@ -155,7 +165,7 @@ fn populate_subject_fields(x509cert: &X509Certificate) -> Result<(String, String
 ///
 /// Contains detailed information extracted from the server certificate
 /// including validity, issuer, subject, and cryptographic details.
-#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq, Default)]
 pub struct ServerCert {
     pub common_name: String,
     pub signature_algorithm: String,
@@ -186,7 +196,7 @@ pub struct ServerCert {
 ///
 /// Intermediate certificates are used by Certificate Authorities to
 /// sign server certificates while keeping the root certificate secure.
-#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq, Default)]
 pub struct IntermediateCert {
     pub common_name: String,
     pub signature_algorithm: String,
@@ -217,7 +227,7 @@ pub struct IntermediateCert {
 ///
 /// This is the main return type for certificate checks, containing
 /// both the server certificate and intermediate certificate information.
-#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Savefile, Debug, Clone, PartialEq, Default)]
 pub struct Cert {
     pub server: ServerCert,
     pub intermediate: IntermediateCert,
