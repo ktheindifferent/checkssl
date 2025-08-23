@@ -63,7 +63,7 @@ fn test_certificate_cache_operations() {
     assert_eq!(key1, key2); // Should be case-insensitive
     
     // Test cache statistics
-    let stats = cache.statistics();
+    let stats = cache.statistics().unwrap();
     assert_eq!(stats.hits, 0);
     assert_eq!(stats.misses, 0);
 }
@@ -204,18 +204,18 @@ fn test_cache_eviction_strategies() {
         ..Default::default()
     };
     
-    cache.put("key1".to_string(), cert1);
-    cache.put("key2".to_string(), cert2);
+    cache.put("key1".to_string(), cert1).unwrap();
+    cache.put("key2".to_string(), cert2).unwrap();
     
     // Access key1 to make it more recently used
-    let _ = cache.get("key1");
+    let _ = cache.get("key1").unwrap();
     
     // Adding key3 should evict key2 (least recently used)
-    cache.put("key3".to_string(), cert3);
+    cache.put("key3".to_string(), cert3).unwrap();
     
-    assert!(cache.contains("key1"));
-    assert!(!cache.contains("key2"));
-    assert!(cache.contains("key3"));
+    assert!(cache.contains("key1").unwrap());
+    assert!(!cache.contains("key2").unwrap());
+    assert!(cache.contains("key3").unwrap());
 }
 
 #[test]
@@ -329,12 +329,12 @@ fn test_cache_ttl_expiration() {
         ..Default::default()
     };
     
-    cache.put("test_key".to_string(), cert);
-    assert!(cache.contains("test_key"));
+    cache.put("test_key".to_string(), cert).unwrap();
+    assert!(cache.contains("test_key").unwrap());
     
     // Wait for TTL to expire
     std::thread::sleep(Duration::from_millis(60));
     
-    assert!(!cache.contains("test_key"));
-    assert!(cache.get("test_key").is_none());
+    assert!(!cache.contains("test_key").unwrap());
+    assert!(cache.get("test_key").unwrap().is_none());
 }

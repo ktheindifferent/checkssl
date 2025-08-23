@@ -32,6 +32,8 @@ pub enum CheckSSLError {
     OcspError(String),
     CrlError(String),
     IoError(io::Error),
+    /// Error when acquiring RwLock (usually due to poisoning)
+    LockError(String),
 }
 
 impl fmt::Display for CheckSSLError {
@@ -54,6 +56,7 @@ impl fmt::Display for CheckSSLError {
             CheckSSLError::OcspError(msg) => write!(f, "OCSP error: {}", msg),
             CheckSSLError::CrlError(msg) => write!(f, "CRL error: {}", msg),
             CheckSSLError::IoError(err) => write!(f, "IO error: {}", err),
+            CheckSSLError::LockError(msg) => write!(f, "Lock error: {}", msg),
         }
     }
 }
