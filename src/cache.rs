@@ -119,9 +119,9 @@ impl CertificateCache {
     }
 
     /// Get a certificate from the cache
-    pub fn get(&self, key: &str) -> Option<Cert> {
-        let mut cache = self.cache.write().unwrap();
-        let mut stats = self.stats.write().unwrap();
+    pub fn get(&self, key: &str) -> Result<Option<Cert>, CheckSSLError> {
+        let mut cache = self.cache.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on cache: {}", e)))?;
+        let mut stats = self.stats.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on stats: {}", e)))?;
 
         if let Some(entry) = cache.get_mut(key) {
             // Check if entry has expired
@@ -129,7 +129,7 @@ impl CertificateCache {
                 cache.remove(key);
                 stats.evictions += 1;
                 stats.misses += 1;
-                return None;
+                return Ok(None);
             }
 
             // Update access tracking
@@ -139,17 +139,17 @@ impl CertificateCache {
             }
 
             stats.hits += 1;
-            Some(entry.cert.clone())
+            Ok(Some(entry.cert.clone()))
         } else {
             stats.misses += 1;
-            None
+            Ok(None)
         }
     }
 
     /// Put a certificate into the cache
-    pub fn put(&self, key: String, cert: Cert) {
-        let mut cache = self.cache.write().unwrap();
-        let mut stats = self.stats.write().unwrap();
+    pub fn put(&self, key: String, cert: Cert) -> Result<(), CheckSSLError> {
+        let mut cache = self.cache.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on cache: {}", e)))?;
+        let mut stats = self.stats.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on stats: {}", e)))?;
 
         // Check if we need to evict entries
         if self.config.eviction_strategy != EvictionStrategy::TimeBasedOnly {
@@ -168,6 +168,7 @@ impl CertificateCache {
 
         cache.insert(key, entry);
         stats.total_entries = cache.len();
+        Ok(())
     }
 
     /// Evict one entry based on the configured strategy
@@ -201,20 +202,21 @@ impl CertificateCache {
     }
 
     /// Clear all entries from the cache
-    pub fn clear(&self) {
-        let mut cache = self.cache.write().unwrap();
-        let mut stats = self.stats.write().unwrap();
+    pub fn clear(&self) -> Result<(), CheckSSLError> {
+        let mut cache = self.cache.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on cache: {}", e)))?;
+        let mut stats = self.stats.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on stats: {}", e)))?;
         
         let count = cache.len();
         cache.clear();
         stats.evictions += count;
         stats.total_entries = 0;
+        Ok(())
     }
 
     /// Remove expired entries from the cache
-    pub fn remove_expired(&self) -> usize {
-        let mut cache = self.cache.write().unwrap();
-        let mut stats = self.stats.write().unwrap();
+    pub fn remove_expired(&self) -> Result<usize, CheckSSLError> {
+        let mut cache = self.cache.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on cache: {}", e)))?;
+        let mut stats = self.stats.write().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire write lock on stats: {}", e)))?;
         
         let now = Instant::now();
         let expired_keys: Vec<String> = cache
@@ -230,45 +232,45 @@ impl CertificateCache {
         
         stats.evictions += count;
         stats.total_entries = cache.len();
-        count
+        Ok(count)
     }
 
     /// Get cache statistics
-    pub fn statistics(&self) -> CacheStatistics {
-        self.stats.read().unwrap().clone()
+    pub fn statistics(&self) -> Result<CacheStatistics, CheckSSLError> {
+        Ok(self.stats.read().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire read lock on stats: {}", e)))?.clone())
     }
 
     /// Get the current size of the cache
-    pub fn size(&self) -> usize {
-        self.cache.read().unwrap().len()
+    pub fn size(&self) -> Result<usize, CheckSSLError> {
+        Ok(self.cache.read().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire read lock on cache: {}", e)))?.len())
     }
 
     /// Check if a key exists in the cache (without updating access)
-    pub fn contains(&self, key: &str) -> bool {
-        let cache = self.cache.read().unwrap();
+    pub fn contains(&self, key: &str) -> Result<bool, CheckSSLError> {
+        let cache = self.cache.read().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire read lock on cache: {}", e)))?;
         if let Some(entry) = cache.get(key) {
-            entry.cached_at.elapsed() <= self.config.ttl
+            Ok(entry.cached_at.elapsed() <= self.config.ttl)
         } else {
-            false
+            Ok(false)
         }
     }
 
     /// Get all cached domains
-    pub fn get_cached_domains(&self) -> Vec<String> {
-        self.cache.read().unwrap().keys().cloned().collect()
+    pub fn get_cached_domains(&self) -> Result<Vec<String>, CheckSSLError> {
+        Ok(self.cache.read().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire read lock on cache: {}", e)))?.keys().cloned().collect())
     }
 
     /// Get cache entry details for debugging
-    pub fn get_entry_details(&self, key: &str) -> Option<CacheEntryDetails> {
-        let cache = self.cache.read().unwrap();
-        cache.get(key).map(|entry| CacheEntryDetails {
+    pub fn get_entry_details(&self, key: &str) -> Result<Option<CacheEntryDetails>, CheckSSLError> {
+        let cache = self.cache.read().map_err(|e| CheckSSLError::LockError(format!("Failed to acquire read lock on cache: {}", e)))?;
+        Ok(cache.get(key).map(|entry| CacheEntryDetails {
             domain: key.to_string(),
             cached_at: entry.cached_at,
             access_count: entry.access_count,
             last_accessed: entry.last_accessed,
             age: entry.cached_at.elapsed(),
             ttl_remaining: self.config.ttl.saturating_sub(entry.cached_at.elapsed()),
-        })
+        }))
     }
 }
 
@@ -306,7 +308,7 @@ where
     let key = CertificateCache::generate_key(domain, port);
     
     // Try to get from cache first
-    if let Some(cert) = cache.get(&key) {
+    if let Some(cert) = cache.get(&key)? {
         return Ok(cert);
     }
     
@@ -314,7 +316,7 @@ where
     let cert = check_fn()?;
     
     // Store in cache
-    cache.put(key, cert.clone());
+    cache.put(key, cert.clone())?;
     
     Ok(cert)
 }
@@ -345,15 +347,15 @@ mod tests {
         let cert = create_test_cert("example.com");
         
         // Put and get
-        cache.put(key.clone(), cert.clone());
-        assert!(cache.contains(&key));
+        cache.put(key.clone(), cert.clone()).unwrap();
+        assert!(cache.contains(&key).unwrap());
         
-        let retrieved = cache.get(&key);
+        let retrieved = cache.get(&key).unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().server.common_name, "example.com");
         
         // Check statistics
-        let stats = cache.statistics();
+        let stats = cache.statistics().unwrap();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 0);
     }
@@ -368,14 +370,14 @@ mod tests {
         let key = CertificateCache::generate_key("example.com", 443);
         let cert = create_test_cert("example.com");
         
-        cache.put(key.clone(), cert);
-        assert!(cache.contains(&key));
+        cache.put(key.clone(), cert).unwrap();
+        assert!(cache.contains(&key).unwrap());
         
         // Wait for expiration
         std::thread::sleep(Duration::from_millis(60));
         
-        assert!(!cache.contains(&key));
-        assert!(cache.get(&key).is_none());
+        assert!(!cache.contains(&key).unwrap());
+        assert!(cache.get(&key).unwrap().is_none());
     }
 
     #[test]
@@ -388,18 +390,18 @@ mod tests {
         let cache = CertificateCache::with_config(config);
         
         // Add 3 entries to a cache with max 2
-        cache.put("key1".to_string(), create_test_cert("domain1.com"));
-        cache.put("key2".to_string(), create_test_cert("domain2.com"));
+        cache.put("key1".to_string(), create_test_cert("domain1.com")).unwrap();
+        cache.put("key2".to_string(), create_test_cert("domain2.com")).unwrap();
         
         // Access key1 to make it more recently used
-        cache.get("key1");
+        cache.get("key1").unwrap();
         
         // Add a third entry, should evict key2 (least recently used)
-        cache.put("key3".to_string(), create_test_cert("domain3.com"));
+        cache.put("key3".to_string(), create_test_cert("domain3.com")).unwrap();
         
-        assert!(cache.contains("key1"));
-        assert!(!cache.contains("key2"));
-        assert!(cache.contains("key3"));
+        assert!(cache.contains("key1").unwrap());
+        assert!(!cache.contains("key2").unwrap());
+        assert!(cache.contains("key3").unwrap());
     }
 
     #[test]
@@ -416,13 +418,118 @@ mod tests {
     fn test_cache_statistics() {
         let cache = CertificateCache::new();
         
-        cache.put("key1".to_string(), create_test_cert("domain1.com"));
-        cache.get("key1");
-        cache.get("key2"); // Miss
+        cache.put("key1".to_string(), create_test_cert("domain1.com")).unwrap();
+        cache.get("key1").unwrap();
+        cache.get("key2").unwrap(); // Miss
         
-        let stats = cache.statistics();
+        let stats = cache.statistics().unwrap();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
         assert_eq!(stats.hit_rate(), 0.5);
+    }
+
+    #[test]
+    fn test_lock_poisoning_handling() {
+        use std::panic;
+        use std::thread;
+
+        let cache = Arc::new(CertificateCache::new());
+        let cache_clone = Arc::clone(&cache);
+        
+        // Spawn a thread that will panic while holding the lock
+        let handle = thread::spawn(move || {
+            // Acquire write lock and panic
+            let _guard = cache_clone.cache.write().unwrap();
+            panic!("Intentional panic to poison the lock");
+        });
+        
+        // Wait for the thread to panic
+        let _ = handle.join();
+        
+        // Now the lock is poisoned, operations should return LockError
+        let result = cache.get("test_key");
+        assert!(result.is_err());
+        if let Err(CheckSSLError::LockError(msg)) = result {
+            assert!(msg.contains("Failed to acquire write lock"));
+        } else {
+            panic!("Expected LockError");
+        }
+    }
+
+    #[test]
+    fn test_all_methods_handle_lock_errors() {
+        use std::panic;
+        use std::thread;
+
+        // Test for cache lock poisoning
+        {
+            let cache = Arc::new(CertificateCache::new());
+            let cache_clone = Arc::clone(&cache);
+            
+            let handle = thread::spawn(move || {
+                let _guard = cache_clone.cache.write().unwrap();
+                panic!("Poison cache lock");
+            });
+            let _ = handle.join();
+            
+            // Test all methods that access cache
+            assert!(cache.get("key").is_err());
+            assert!(cache.put("key".to_string(), create_test_cert("test.com")).is_err());
+            assert!(cache.clear().is_err());
+            assert!(cache.remove_expired().is_err());
+            assert!(cache.size().is_err());
+            assert!(cache.contains("key").is_err());
+            assert!(cache.get_cached_domains().is_err());
+            assert!(cache.get_entry_details("key").is_err());
+        }
+
+        // Test for stats lock poisoning
+        {
+            let cache = Arc::new(CertificateCache::new());
+            let cache_clone = Arc::clone(&cache);
+            
+            let handle = thread::spawn(move || {
+                let _guard = cache_clone.stats.write().unwrap();
+                panic!("Poison stats lock");
+            });
+            let _ = handle.join();
+            
+            // Test methods that access stats
+            assert!(cache.statistics().is_err());
+            // get and put also access stats
+            assert!(cache.get("key").is_err());
+            assert!(cache.put("key".to_string(), create_test_cert("test.com")).is_err());
+        }
+    }
+
+    #[test]
+    fn test_error_propagation_in_check_with_cache() {
+        use std::panic;
+        use std::thread;
+
+        let cache = Arc::new(CertificateCache::new());
+        let cache_clone = Arc::clone(&cache);
+        
+        // Poison the lock
+        let handle = thread::spawn(move || {
+            let _guard = cache_clone.cache.write().unwrap();
+            panic!("Poison lock for check_with_cache test");
+        });
+        let _ = handle.join();
+        
+        // check_with_cache should propagate the lock error
+        let result = check_with_cache(
+            &cache,
+            "example.com",
+            443,
+            || Ok(create_test_cert("example.com"))
+        );
+        
+        assert!(result.is_err());
+        if let Err(CheckSSLError::LockError(_)) = result {
+            // Expected
+        } else {
+            panic!("Expected LockError from check_with_cache");
+        }
     }
 }
