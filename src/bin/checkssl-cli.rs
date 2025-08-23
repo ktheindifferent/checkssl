@@ -402,3 +402,52 @@ fn process_batch_file(batch_file: &str, port: u16, timeout: u64) {
         process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    
+    #[test]
+    fn test_timestamp_conversion_valid() {
+        // Test with a known timestamp (2024-01-01 00:00:00 UTC)
+        let timestamp: i64 = 1704067200;
+        let result = chrono::DateTime::from_timestamp(timestamp, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string());
+        
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "2024-01-01 00:00:00 UTC");
+    }
+    
+    #[test]
+    fn test_timestamp_conversion_with_nanoseconds() {
+        // Test with nanoseconds
+        let timestamp: i64 = 1704067200;
+        let nanos: u32 = 500_000_000; // 0.5 seconds
+        let result = chrono::DateTime::from_timestamp(timestamp, nanos)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.f UTC").to_string());
+        
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with("2024-01-01 00:00:00.5"));
+    }
+    
+    #[test]
+    fn test_timestamp_conversion_invalid() {
+        // Test with an invalid timestamp (too large)
+        let invalid_timestamp: i64 = i64::MAX;
+        let result = chrono::DateTime::from_timestamp(invalid_timestamp, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+        
+        assert_eq!(result, "Unknown");
+    }
+    
+    #[test]
+    fn test_timestamp_conversion_negative() {
+        // Test with a negative timestamp (before Unix epoch)
+        let negative_timestamp: i64 = -86400; // 1 day before epoch
+        let result = chrono::DateTime::from_timestamp(negative_timestamp, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string());
+        
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "1969-12-31 00:00:00 UTC");
+    }
+}

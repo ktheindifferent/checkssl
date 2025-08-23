@@ -65,8 +65,8 @@ pub use custom_roots::{CustomRootStoreBuilder, CheckSSLConfigWithRoots};
 pub use platform::{platform_name, architecture, get_system_cert_paths};
 pub use ocsp::{check_ocsp_status, OcspStatus, OcspRequest, OcspResponse, RevocationReason};
 pub use retry::{RetryConfig, retry_with_backoff, RetryableError};
-pub use pem_support::{CertificateFormat, load_certificates_from_file, check_certificate_from_file, der_to_pem, pem_to_der};
-pub use batch::{batch_check_domains, BatchConfig, BatchCheckResult, BatchStatistics, export_batch_results_json, export_batch_results_csv};
+pub use pem_support::{CertificateFormat, load_certificates_from_file, load_certificate_chain_from_files, check_certificate_from_file, der_to_pem, pem_to_der};
+pub use batch::{batch_check_domains, batch_check_domains_grouped, BatchConfig, BatchCheckResult, BatchStatistics, export_batch_results_json, export_batch_results_csv};
 pub use cache::{CertificateCache, CacheConfig, EvictionStrategy, global_cache, check_with_cache};
 pub use crypto_analysis::{
     analyze_certificate, CryptoAnalysis, SecurityLevel, generate_security_report,
