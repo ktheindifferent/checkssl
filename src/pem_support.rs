@@ -363,7 +363,47 @@ fn build_intermediate_cert(cert_der: &[u8], x509cert: &X509Certificate) -> Resul
     })
 }
 
-/// Load certificate chain from multiple files
+/// Load certificate chain from multiple files.
+///
+/// This function loads and combines certificates from multiple files, useful for
+/// building complete certificate chains from separate certificate files (e.g., 
+/// server cert, intermediate cert, root cert stored in different files).
+///
+/// # Arguments
+///
+/// * `paths` - A slice of file paths to load certificates from
+/// * `format` - The format of the certificates (PEM, DER, or Auto-detect)
+///
+/// # Returns
+///
+/// Returns a `Result` containing:
+/// - `Ok(Vec<Vec<u8>>)` - A vector of certificate data in DER format
+/// - `Err(CheckSSLError)` - Error if loading or parsing fails
+///
+/// # Example
+///
+/// ```no_run
+/// use checkssl::{load_certificate_chain_from_files, CertificateFormat};
+/// use std::path::Path;
+///
+/// let cert_files = vec![
+///     Path::new("/path/to/server.crt"),
+///     Path::new("/path/to/intermediate.crt"),
+///     Path::new("/path/to/root.crt"),
+/// ];
+///
+/// match load_certificate_chain_from_files(&cert_files, CertificateFormat::Auto) {
+///     Ok(chain) => println!("Loaded {} certificates", chain.len()),
+///     Err(e) => eprintln!("Failed to load chain: {}", e),
+/// }
+/// ```
+///
+/// # Use Cases
+///
+/// - Building certificate chains for TLS validation
+/// - Combining separate certificate files into a single chain
+/// - Loading certificate bundles for custom root stores
+/// - Preparing certificates for chain validation
 pub fn load_certificate_chain_from_files<P: AsRef<Path>>(
     paths: &[P],
     format: CertificateFormat,

@@ -220,7 +220,71 @@ pub fn batch_check_domains(
     final_results
 }
 
-/// Check domains in groups with different configurations
+/// Check domains in groups with different configurations.
+///
+/// This function allows checking multiple groups of domains, where each group
+/// can have its own configuration (timeout, port, etc.). This is useful when
+/// checking different types of services that may require different settings.
+///
+/// # Arguments
+///
+/// * `domain_groups` - A HashMap where:
+///   - Key: Group name (e.g., "production", "staging", "external_apis")
+///   - Value: Tuple of (list of domains, configuration for this group)
+/// * `max_concurrent` - Maximum number of concurrent checks per group
+///
+/// # Returns
+///
+/// Returns a HashMap where:
+/// - Key: Group name
+/// - Value: Vector of BatchCheckResult for all domains in that group
+///
+/// # Example
+///
+/// ```no_run
+/// use checkssl::{batch_check_domains_grouped, CheckSSLConfig};
+/// use std::collections::HashMap;
+/// use std::time::Duration;
+///
+/// let mut groups = HashMap::new();
+///
+/// // Production servers with standard timeout
+/// let prod_domains = vec!["api.example.com".to_string(), "www.example.com".to_string()];
+/// let prod_config = CheckSSLConfig {
+///     timeout: Duration::from_secs(5),
+///     port: 443,
+/// };
+/// groups.insert("production".to_string(), (prod_domains, prod_config));
+///
+/// // Internal services on custom port with longer timeout
+/// let internal_domains = vec!["service1.internal".to_string(), "service2.internal".to_string()];
+/// let internal_config = CheckSSLConfig {
+///     timeout: Duration::from_secs(10),
+///     port: 8443,
+/// };
+/// groups.insert("internal".to_string(), (internal_domains, internal_config));
+///
+/// // Check all groups with max 5 concurrent checks per group
+/// let results = batch_check_domains_grouped(groups, 5);
+///
+/// for (group_name, group_results) in results {
+///     println!("Group {}: {} domains checked", group_name, group_results.len());
+///     for result in group_results {
+///         match result.result {
+///             Ok(cert) => println!("  {} - Valid: {}", result.domain, cert.server.is_valid),
+///             Err(e) => println!("  {} - Error: {}", result.domain, e),
+///         }
+///     }
+/// }
+/// ```
+///
+/// # Use Cases
+///
+/// - Monitoring different environments (production, staging, development)
+/// - Checking services with different port configurations
+/// - Grouping domains by criticality with different timeout settings
+/// - Organizing certificate checks by team or service ownership
+/// - Generating grouped reports for different stakeholders
 pub fn batch_check_domains_grouped(
     domain_groups: HashMap<String, (Vec<String>, CheckSSLConfig)>,
     max_concurrent: usize,
