@@ -11,7 +11,7 @@ use std::io;
 ///
 /// This enum provides specific error variants for different failure modes,
 /// making it easier to handle errors appropriately.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CheckSSLError {
     NetworkError(String),
     CertificateParseError(String),
@@ -31,7 +31,7 @@ pub enum CheckSSLError {
     ChainValidationError(String),
     OcspError(String),
     CrlError(String),
-    IoError(io::Error),
+    IoError(String),
 }
 
 impl fmt::Display for CheckSSLError {
@@ -60,10 +60,7 @@ impl fmt::Display for CheckSSLError {
 
 impl Error for CheckSSLError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            CheckSSLError::IoError(err) => Some(err),
-            _ => None,
-        }
+        None // Since we're using String for IoError now, we don't have the original error
     }
 }
 
@@ -73,7 +70,7 @@ impl From<io::Error> for CheckSSLError {
             io::ErrorKind::TimedOut => CheckSSLError::TimeoutError("Connection timed out".to_string()),
             io::ErrorKind::InvalidInput => CheckSSLError::InvalidDomainError(err.to_string()),
             io::ErrorKind::NotFound => CheckSSLError::CertificateParseError("Certificate not found".to_string()),
-            _ => CheckSSLError::IoError(err),
+            _ => CheckSSLError::IoError(err.to_string()),
         }
     }
 }

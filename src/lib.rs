@@ -68,7 +68,10 @@ pub use retry::{RetryConfig, retry_with_backoff, RetryableError};
 pub use pem_support::{CertificateFormat, load_certificates_from_file, check_certificate_from_file, der_to_pem, pem_to_der};
 pub use batch::{batch_check_domains, BatchConfig, BatchCheckResult, BatchStatistics, export_batch_results_json, export_batch_results_csv};
 pub use cache::{CertificateCache, CacheConfig, EvictionStrategy, global_cache, check_with_cache};
-pub use crypto_analysis::{analyze_certificate, CryptoAnalysis, SecurityLevel, generate_security_report};
+pub use crypto_analysis::{
+    analyze_certificate, CryptoAnalysis, SecurityLevel, generate_security_report,
+    SecurityIssue, IssueCategory
+};
 
 /// Helper function to extract RDN value from a certificate attribute
 pub(crate) fn extract_rdn_value(rdn_seq: &x509_parser::x509::RelativeDistinguishedName) -> Result<String, CheckSSLError> {

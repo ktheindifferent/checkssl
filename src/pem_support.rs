@@ -31,11 +31,11 @@ pub fn load_certificates_from_file<P: AsRef<Path>>(
 ) -> Result<Vec<Vec<u8>>, CheckSSLError> {
     let path = path.as_ref();
     let mut file = File::open(path)
-        .map_err(|e| CheckSSLError::IoError(e))?;
+        .map_err(|e| CheckSSLError::IoError(e.to_string()))?;
 
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)
-        .map_err(|e| CheckSSLError::IoError(e))?;
+        .map_err(|e| CheckSSLError::IoError(e.to_string()))?;
 
     match format {
         CertificateFormat::PEM => parse_pem_certificates(&contents),
